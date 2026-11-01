@@ -1,5 +1,8 @@
 #include "selftest.h"
+#include "arch/keyboard.h"
+#include "arch/rtc.h"
 #include "boot/multiboot2.h"
+#include "learn/learn.h"
 #include "layout.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
@@ -52,6 +55,11 @@ static void test_string(void) {
     CHECK(strncmp("abcd", "abzz", 2) == 0);
     CHECK(strncmp("abcd", "abzz", 3) < 0);
     CHECK(strncmp("a", "b", 0) == 0);
+
+    CHECK(strcasecmp("Page Fault", "page fault") == 0);
+    CHECK(strcasecmp("abc", "abd") < 0);
+    CHECK(strncasecmp("HELLO", "help", 3) == 0);
+    CHECK(strncasecmp("HELLO", "help", 4) != 0);
 
     memset(a, 0xAB, sizeof(a));
     CHECK(a[0] == 0xAB && a[7] == 0xAB);
@@ -398,6 +406,64 @@ static void test_heap_exhaustion(void) {
     CHECK(stats_equal(&before, &after));
 }
 
+
+/* ---- keyboard ring, RTC, glossary, lessons ------------------------------ */
+
+static void test_keyboard_ring(void) {
+    char c;
+    int kept = 0;
+
+    while (keyboard_try_read(&c)) {
+    }
+    CHECK(!keyboard_try_read(&c));
+
+    keyboard_push_char('a');
+    keyboard_push_char('b');
+    CHECK(keyboard_try_read(&c) && c == 'a');
+    CHECK(keyboard_try_read(&c) && c == 'b');
+    CHECK(!keyboard_try_read(&c));
+
+    /* Overfilling drops the extra keystrokes instead of corrupting the ring. */
+    for (int i = 0; i < 100; i++) {
+        keyboard_push_char((char)('A' + i % 26));
+    }
+    CHECK(keyboard_try_read(&c) && c == 'A');
+    kept = 1;
+    while (keyboard_try_read(&c)) {
+        kept++;
+    }
+    CHECK(kept == 63);          /* a 64-slot ring holds 63 */
+
+    /* keyboard_getc returns an already-queued character without sleeping. */
+    keyboard_push_char('z');
+    CHECK(keyboard_getc() == 'z');
+}
+
+static void test_rtc(void) {
+    struct rtc_time t;
+
+    rtc_read(&t);
+    CHECK(t.year >= 2000 && t.year < 2100);
+    CHECK(t.month >= 1 && t.month <= 12);
+    CHECK(t.day >= 1 && t.day <= 31);
+    CHECK(t.hour < 24 && t.minute < 60 && t.second < 60);
+}
+
+static void test_glossary(void) {
+    CHECK(glossary_term_count() > 30);
+    CHECK(glossary_lookup("PAGE FAULT") != 0);
+    CHECK(glossary_lookup("gdt") != 0);
+    CHECK(glossary_lookup("no such term") == 0);
+}
+
+#ifdef KC_SELFTEST
+/* Run every lesson headless: any crash, fault or hang fails the build. */
+static void test_lessons_run(void) {
+    CHECK(learn_lesson_count() >= 7);
+    learn_run_all_auto();
+}
+#endif
+
 /* ---- runner ----------------------------------------------------------- */
 
 struct test_case {
@@ -415,6 +481,12 @@ static const struct test_case tests[] = {
     { "heap: calloc",         test_heap_calloc },
     { "heap: fragmentation",  test_heap_fragmentation },
     { "heap: exhaustion",     test_heap_exhaustion },
+    { "keyboard ring",        test_keyboard_ring },
+    { "rtc",                  test_rtc },
+    { "glossary",             test_glossary },
+#ifdef KC_SELFTEST
+    { "lessons run headless", test_lessons_run },
+#endif
 };
 
 int selftest_run(void) {

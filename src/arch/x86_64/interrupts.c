@@ -1,4 +1,5 @@
 #include "arch/interrupts.h"
+#include "arch/cpu.h"
 #include "arch/debug.h"
 #include "arch/idt.h"
 #include "arch/isr.h"
@@ -6,6 +7,7 @@
 #include "arch/log.h"
 #include "arch/pic.h"
 #include "arch/pit.h"
+#include "lib/kprintf.h"
 #include "vga.h"
 
 static const char *exception_names[32] = {
@@ -43,6 +45,42 @@ static const char *exception_names[32] = {
     "Reserved"
 };
 
+static uint64_t vector_counts[256];
+
+uint64_t interrupt_count(uint8_t vector) {
+    return vector_counts[vector];
+}
+
+const char *interrupt_vector_name(uint8_t vector) {
+    static const char *irq_names[16] = {
+        "IRQ 0 (timer)", "IRQ 1 (keyboard)", "IRQ 2 (cascade)", "IRQ 3 (COM2)",
+        "IRQ 4 (COM1)", "IRQ 5", "IRQ 6 (floppy)", "IRQ 7 (LPT1)",
+        "IRQ 8 (RTC)", "IRQ 9", "IRQ 10", "IRQ 11", "IRQ 12 (mouse)",
+        "IRQ 13 (FPU)", "IRQ 14 (ATA 1)", "IRQ 15 (ATA 2)"
+    };
+
+    if (vector < 32) {
+        return exception_names[vector];
+    }
+    if (vector < 48) {
+        return irq_names[vector - 32];
+    }
+    if (vector == 0x80) {
+        return "System call";
+    }
+    return "(unused)";
+}
+
+/* Decode the page-fault error code and the faulting address in CR2. */
+static void print_page_fault_details(uint64_t error) {
+    kprintf("page fault at address 0x%016lx\n", read_cr2());
+    kprintf("  cause: %s while %s in %s mode%s\n",
+            (error & 1) ? "protection violation" : "page not present",
+            (error & 2) ? "writing" : "reading",
+            (error & 4) ? "user" : "supervisor",
+            (error & 16) ? " (instruction fetch)" : "");
+}
+
 static void halt_forever(void) {
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -58,6 +96,8 @@ static void print_exception_name(uint64_t vector) {
 }
 
 void interrupt_dispatch(interrupt_frame_t *frame) {
+    vector_counts[frame->vector & 0xFF]++;
+
     if (frame->vector < 32) {
         debug_save_last_frame(frame);
 
@@ -75,6 +115,9 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         log_write("\nEXCEPTION: ");
         print_exception_name(frame->vector);
         log_write("\n");
+        if (frame->vector == 14) {
+            print_page_fault_details(frame->error_code);
+        }
         debug_print_frame(frame);
         halt_forever();
     }

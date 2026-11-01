@@ -64,7 +64,7 @@ debug: $(ISO_IMAGE)
 # Boot a -DKC_SELFTEST build headless. The kernel runs its self-tests and
 # leaves through QEMU's isa-debug-exit device: exit status 33 means success.
 TEST_BUILD_DIR = $(BUILD_DIR)/test
-TEST_TIMEOUT   = 60
+TEST_TIMEOUT   = 120
 
 test:
 	$(MAKE) --no-print-directory BUILD_DIR=$(TEST_BUILD_DIR) \

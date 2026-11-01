@@ -19,6 +19,8 @@ int memcmp(const void *a, const void *b, size_t n);
 size_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
+int strcasecmp(const char *a, const char *b);   /* ASCII case-insensitive */
+int strncasecmp(const char *a, const char *b, size_t n);
 
 /*
  * Parse an unsigned number: decimal ("123") or hexadecimal ("0x7B").

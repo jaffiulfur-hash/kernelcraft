@@ -1,6 +1,5 @@
 #include "arch/keyboard.h"
 #include "arch/io.h"
-#include "shell.h"
 
 /*
  * PS/2 scancode set 1 (what the controller delivers after translation).
@@ -59,14 +58,87 @@ static int shift_down;
 static int caps_lock;
 static int extended_pending;
 
+#define CHAR_RING_SIZE 64      /* must be a power of two */
+#define RAW_RING_SIZE  64
+
+static volatile char char_ring[CHAR_RING_SIZE];
+static volatile uint32_t char_head;    /* next slot the IRQ handler writes */
+static volatile uint32_t char_tail;    /* next slot the consumer reads */
+
+static volatile uint8_t raw_ring[RAW_RING_SIZE];
+static volatile uint64_t raw_total;
+
 void keyboard_init(void) {
     shift_down = 0;
     caps_lock = 0;
     extended_pending = 0;
+    char_head = 0;
+    char_tail = 0;
+    raw_total = 0;
+}
+
+void keyboard_push_char(char c) {
+    uint32_t next = (char_head + 1) & (CHAR_RING_SIZE - 1);
+
+    if (next == char_tail) {
+        return;                         /* ring full: drop the keystroke */
+    }
+
+    char_ring[char_head] = c;
+    char_head = next;
+}
+
+int keyboard_try_read(char *out) {
+    if (char_tail == char_head) {
+        return 0;
+    }
+
+    *out = char_ring[char_tail];
+    char_tail = (char_tail + 1) & (CHAR_RING_SIZE - 1);
+    return 1;
+}
+
+char keyboard_getc(void) {
+    char c;
+
+    for (;;) {
+        if (keyboard_try_read(&c)) {
+            return c;
+        }
+
+        /*
+         * Check-then-sleep must not race with the interrupt: with interrupts
+         * off, re-check, then `sti; hlt`. The CPU runs one more instruction
+         * after sti before it can take an interrupt, so the wake-up cannot
+         * slip in between sti and hlt and be lost.
+         */
+        __asm__ volatile ("cli");
+        if (char_tail == char_head) {
+            __asm__ volatile ("sti; hlt");
+        } else {
+            __asm__ volatile ("sti");
+        }
+    }
+}
+
+uint64_t keyboard_raw_count(void) {
+    return raw_total;
+}
+
+int keyboard_raw_at(uint64_t index, uint8_t *out) {
+    if (index >= raw_total || raw_total - index > RAW_RING_SIZE) {
+        return 0;
+    }
+
+    *out = raw_ring[index % RAW_RING_SIZE];
+    return 1;
 }
 
 void keyboard_handle_scancode(void) {
     uint8_t raw = inb(0x60);
+
+    raw_ring[raw_total % RAW_RING_SIZE] = raw;
+    raw_total++;
 
     if (raw == 0xE0) {
         extended_pending = 1;
@@ -81,7 +153,7 @@ void keyboard_handle_scancode(void) {
 
         /* Ignore arrows, Home/End, etc.; they used to be misread as keypad digits. */
         if (!released && code == SC_KP_ENTER) {
-            shell_handle_char('\n');
+            keyboard_push_char('\n');
         }
         return;
     }
@@ -109,6 +181,6 @@ void keyboard_handle_scancode(void) {
     }
 
     if (c) {
-        shell_handle_char(c);
+        keyboard_push_char(c);
     }
 }

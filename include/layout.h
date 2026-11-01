@@ -11,6 +11,12 @@
 extern const char __kernel_start[];
 extern const char __kernel_end[];
 
+extern const char __multiboot_end[];
+extern const char __text_start[], __text_end[];
+extern const char __rodata_start[], __rodata_end[];
+extern const char __data_start[], __data_end[];
+extern const char __bss_start[], __bss_end[];
+
 #define KERNEL_START ((uint64_t)(uintptr_t)__kernel_start)
 #define KERNEL_END   ((uint64_t)(uintptr_t)__kernel_end)
 

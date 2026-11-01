@@ -55,3 +55,40 @@ const char *mb2_mmap_type_name(uint32_t type) {
         default:                                return "unknown";
     }
 }
+
+const struct multiboot_tag *mb2_first_tag(uint32_t mb_info_addr) {
+    const struct multiboot_tag *tag =
+        (const struct multiboot_tag *)((uintptr_t)mb_info_addr + 8);
+
+    return tag->type == MULTIBOOT_TAG_TYPE_END ? 0 : tag;
+}
+
+const struct multiboot_tag *mb2_next_tag(uint32_t mb_info_addr,
+                                         const struct multiboot_tag *tag) {
+    const uint8_t *end = (const uint8_t *)(uintptr_t)mb_info_addr +
+                         mb2_info_size(mb_info_addr);
+    const uint8_t *next = (const uint8_t *)tag + ((tag->size + 7u) & ~7u);
+
+    if (tag->size < sizeof(struct multiboot_tag) ||
+        next + sizeof(struct multiboot_tag) > end) {
+        return 0;
+    }
+
+    const struct multiboot_tag *n = (const struct multiboot_tag *)next;
+
+    return n->type == MULTIBOOT_TAG_TYPE_END ? 0 : n;
+}
+
+const char *mb2_tag_type_name(uint32_t type) {
+    static const char *names[] = {
+        "end", "command line", "boot loader name", "modules", "basic meminfo",
+        "BIOS boot device", "memory map", "VBE info", "framebuffer",
+        "ELF sections", "APM table", "EFI32 system table",
+        "EFI64 system table", "SMBIOS tables", "ACPI RSDP (old)",
+        "ACPI RSDP (new)", "network info", "EFI memory map",
+        "EFI boot services", "EFI32 image handle", "EFI64 image handle",
+        "image load base"
+    };
+
+    return type < sizeof(names) / sizeof(names[0]) ? names[type] : "unknown";
+}

@@ -98,6 +98,33 @@ int strncmp(const char *a, const char *b, size_t n) {
     return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
+static char to_lower(char c) {
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+int strcasecmp(const char *a, const char *b) {
+    while (*a && to_lower(*a) == to_lower(*b)) {
+        a++;
+        b++;
+    }
+
+    return (int)(unsigned char)to_lower(*a) - (int)(unsigned char)to_lower(*b);
+}
+
+int strncasecmp(const char *a, const char *b, size_t n) {
+    while (n && *a && to_lower(*a) == to_lower(*b)) {
+        a++;
+        b++;
+        n--;
+    }
+
+    if (n == 0) {
+        return 0;
+    }
+
+    return (int)(unsigned char)to_lower(*a) - (int)(unsigned char)to_lower(*b);
+}
+
 int str_to_u64(const char *s, uint64_t *out) {
     uint64_t value = 0;
     unsigned base = 10;

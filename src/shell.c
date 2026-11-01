@@ -1,12 +1,14 @@
 #include "shell.h"
 #include "kernel.h"
 #include "layout.h"
+#include "learn/learn.h"
 #include "panic.h"
 #include "selftest.h"
 #include "vga.h"
 #include "arch/debug.h"
 #include "arch/log.h"
 #include "arch/pit.h"
+#include "arch/rtc.h"
 #include "arch/power.h"
 #include "arch/serial.h"
 #include "lib/kprintf.h"
@@ -101,6 +103,51 @@ static void cmd_uptime(int argc, char **argv) {
 
     kprintf("up %lu.%02lu seconds (%lu ticks at %d Hz)\n", ticks / PIT_HZ,
             (ticks % PIT_HZ) * 100 / PIT_HZ, ticks, PIT_HZ);
+}
+
+static void cmd_date(int argc, char **argv) {
+    struct rtc_time t;
+
+    (void)argc;
+    (void)argv;
+    rtc_read(&t);
+    kprintf("%04d-%02d-%02d %02d:%02d:%02d (RTC, usually UTC)\n", t.year, t.month,
+            t.day, t.hour, t.minute, t.second);
+}
+
+static void cmd_sleep(int argc, char **argv) {
+    uint64_t ms;
+
+    if (argc != 2) {
+        print_usage("sleep <milliseconds>");
+        return;
+    }
+    if (parse_arg(argv[1], "milliseconds", &ms) != 0) {
+        return;
+    }
+
+    /* Interrupts are on in the main loop, so hlt wakes on every timer tick. */
+    uint64_t until = pit_get_ticks() + (ms * PIT_HZ + 999) / 1000;
+    while (pit_get_ticks() < until) {
+        __asm__ volatile ("hlt");
+    }
+}
+
+static void cmd_learn(int argc, char **argv) {
+    learn_command(argc, argv);
+}
+
+static void cmd_glossary(int argc, char **argv) {
+    glossary_command(argc, argv);
+}
+
+static void cmd_pf(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    kprintf("reading unmapped address 0x40000000 (just past the 1 GiB identity map)...\n");
+    volatile uint64_t *p = (volatile uint64_t *)0x40000000ull;
+    uint64_t v = *p;
+    (void)v;
 }
 
 static void cmd_reboot(int argc, char **argv) {
@@ -358,6 +405,10 @@ static const struct shell_command commands[] = {
     { "clear",    "clear",               "clear the screen",                 cmd_clear },
     { "about",    "about",               "show kernel name and stage",       cmd_about },
     { "echo",     "echo [text...]",      "print arguments",                  cmd_echo },
+    { "date",     "date",                "wall-clock time from the RTC",     cmd_date },
+    { "sleep",    "sleep <ms>",          "wait, with the CPU halted",        cmd_sleep },
+    { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
+    { "glossary", "glossary [term]",     "look up an OS term",               cmd_glossary },
     { "ticks",    "ticks",               "timer ticks since boot",           cmd_ticks },
     { "uptime",   "uptime",              "time since boot",                  cmd_uptime },
     { "reboot",   "reboot",              "reset the machine",                cmd_reboot },
@@ -366,6 +417,7 @@ static const struct shell_command commands[] = {
     { "panic",    "panic",               "trigger a kernel panic",           cmd_panic },
     { "int3",     "int3",                "trigger a breakpoint trap",        cmd_int3 },
     { "div0",     "div0",                "trigger a divide error",           cmd_div0 },
+    { "pf",       "pf",                  "trigger a page fault",             cmd_pf },
     { "regs",     "regs",                "registers of the last trap",       cmd_regs },
     { "last",     "last",                "alias for regs",                   cmd_regs },
     { "hexdump",  "hexdump <addr> [len]", "dump memory (first 1 GiB only)",  cmd_hexdump },
