@@ -29,7 +29,7 @@ void lesson_roadmap(void) {
     kprintf(" 4.1   kernel heap, kprintf, tests      mm/heap.c lib/ selftest.c\n");
     kprintf(" 5     lessons, page-table walker       learn/ mm/paging.c\n");
     kprintf(" 5.2   threads and a scheduler          sched/\n");
-    kprintf(" 5.3   PCI scan, system calls           arch/pci.c syscall/\n");
+    kprintf(" 5.3   PCI scan, system calls           pci.c syscall/\n");
     kprintf(" next  user mode, filesystem, drivers   (your turn)\n\n");
     learn_para("The order is not arbitrary. You cannot handle a fault until the "
                "IDT exists, cannot allocate until you know what memory you have, "

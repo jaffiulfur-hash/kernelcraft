@@ -6,9 +6,11 @@
 #include "selftest.h"
 #include "vga.h"
 #include "arch/debug.h"
+#include "arch/keyboard.h"
 #include "arch/log.h"
 #include "arch/pit.h"
 #include "arch/rtc.h"
+#include "arch/pci.h"
 #include "arch/power.h"
 #include "arch/serial.h"
 #include "lib/kprintf.h"
@@ -167,6 +169,22 @@ static void cmd_vtop(int argc, char **argv) {
 
 static void cmd_learn(int argc, char **argv) {
     learn_command(argc, argv);
+}
+
+static void cmd_quiz(int argc, char **argv) {
+    quiz_command(argc, argv);
+}
+
+static void cmd_tour(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    learn_tour();
+}
+
+static void cmd_pci(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    pci_print_devices();
 }
 
 static void cmd_glossary(int argc, char **argv) {
@@ -442,6 +460,9 @@ static const struct shell_command commands[] = {
     { "vtop",     "vtop <addr>",         "walk the page tables for an address", cmd_vtop },
     { "ps",       "ps",                  "list threads and scheduler stats", cmd_ps },
     { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
+    { "tour",     "tour",                "all lessons in order",             cmd_tour },
+    { "quiz",     "quiz",                "10 questions on how OSes work",    cmd_quiz },
+    { "pci",      "pci",                 "list PCI devices",                 cmd_pci },
     { "glossary", "glossary [term]",     "look up an OS term",               cmd_glossary },
     { "ticks",    "ticks",               "timer ticks since boot",           cmd_ticks },
     { "uptime",   "uptime",              "time since boot",                  cmd_uptime },
@@ -475,8 +496,26 @@ static void cmd_help(int argc, char **argv) {
 
     kprintf("commands (numbers: decimal or 0x hex):\n");
 
+    /* More commands than screen rows, so pause every page. This blocks on the
+     * keyboard, which only works because commands run outside the IRQ handler. */
+    int shown = 1;
+
     for (size_t i = 0; i < COMMAND_COUNT; i++) {
+        if (shown == 22) {
+            kprintf("-- Enter: more   q: stop --");
+            char c;
+            do {
+                c = keyboard_getc();
+            } while (c != '\n' && c != 'q' && c != 'Q');
+            kprintf("\n");
+            if (c != '\n') {
+                return;
+            }
+            shown = 0;
+        }
+
         kprintf("  %-22s %s\n", commands[i].usage, commands[i].help);
+        shown++;
     }
 }
 

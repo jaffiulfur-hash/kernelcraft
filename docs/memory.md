@@ -103,7 +103,9 @@ Known limits, all deliberate for now:
 ## Self-tests
 
 `src/selftest.c` checks the string helpers, `kprintf`, the PMM (including bad
-frees and contiguous runs) and the heap (alignment, overlap, reuse,
-coalescing, exhaustion). Run it with the shell's `selftest` command, or with
+frees and contiguous runs), the heap (alignment, overlap, reuse, coalescing,
+exhaustion), the scheduler (round-robin order, sleep, timer preemption, race
+conditions and their fixes), PCI, syscalls, and - in the `make test` build -
+runs every lesson headless. Run it with the shell's `selftest` command, or with
 `make test`, which boots a `-DKC_SELFTEST` build headless and reads the result
 from QEMU's exit status via the `isa-debug-exit` device.

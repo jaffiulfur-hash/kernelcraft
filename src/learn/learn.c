@@ -36,6 +36,10 @@ static const struct lesson lessons[] = {
       "context switches and preemption, with live threads", lesson_sched },
     { "sync",     "Races and locks",
       "lose updates on purpose, then fix them with a mutex", lesson_sync },
+    { "syscall",  "System calls",
+      "int 0x80, the call table and why arguments are distrusted", lesson_syscall },
+    { "pci",      "Finding hardware: PCI",
+      "enumerate the real devices and read a config header", lesson_pci },
 };
 
 #define LESSON_COUNT ((int)(sizeof(lessons) / sizeof(lessons[0])))
@@ -213,12 +217,17 @@ static void print_index(void) {
         kprintf("  %2d  %-9s %s\n", i + 1, lessons[i].name, lessons[i].summary);
     }
 
-    kprintf("also: glossary [term]\n");
+    kprintf("also: tour (all lessons in order)   quiz   glossary [term]   pci\n");
 }
 
 void learn_command(int argc, char **argv) {
     if (argc == 1) {
         print_index();
+        return;
+    }
+
+    if (strcasecmp(argv[1], "tour") == 0) {
+        learn_tour();
         return;
     }
 
@@ -245,4 +254,31 @@ void learn_run_all_auto(void) {
         run_lesson(i);
     }
     auto_mode = 0;
+}
+
+void learn_tour(void) {
+    for (int i = 0; i < LESSON_COUNT; i++) {
+        run_lesson(i);
+
+        if (i + 1 < LESSON_COUNT) {
+            vga_set_color(VGA_COLOR_LIGHT_BROWN, VGA_COLOR_BLACK);
+            kprintf("Next: lesson %d, %s.  Enter: continue   q: stop the tour ", i + 2,
+                    lessons[i + 1].title);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+
+            for (;;) {
+                char c = keyboard_getc();
+
+                if (c == 'q' || c == 'Q') {
+                    kprintf("\n");
+                    return;
+                }
+                if (c == '\n') {
+                    break;
+                }
+            }
+        }
+    }
+
+    kprintf("Tour complete. Try 'quiz' to test yourself.\n");
 }

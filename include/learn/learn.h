@@ -68,6 +68,8 @@ void lesson_paging(void);
 void lesson_heap(void);
 void lesson_sched(void);
 void lesson_sync(void);
+void lesson_syscall(void);
+void lesson_pci(void);
 
 /* The race demo behind the sync lesson; also used by the self-tests. */
 #define SYNC_UNSAFE  0
@@ -76,6 +78,13 @@ void lesson_sync(void);
 #define SYNC_ITERS   50
 #define SYNC_THREADS 3
 uint64_t sync_demo_race(int mode);
+
+/* ---- other programs ---------------------------------------------------- */
+void learn_tour(void);                      /* run every lesson in order */
+void quiz_command(int argc, char **argv);   /* 10 random questions */
+int quiz_question_count(void);
+int quiz_validate(void);                    /* 0 if every question is well-formed */
+void pci_print_devices(void);               /* also behind the `pci` command */
 
 /* ---- glossary --------------------------------------------------------- */
 void glossary_command(int argc, char **argv);

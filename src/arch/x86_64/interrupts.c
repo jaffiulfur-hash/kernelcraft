@@ -8,6 +8,7 @@
 #include "arch/pic.h"
 #include "arch/pit.h"
 #include "sched/thread.h"
+#include "syscall/syscall.h"
 #include "lib/kprintf.h"
 #include "vga.h"
 
@@ -146,6 +147,11 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         }
 
         pic_send_eoi(irq);
+        return;
+    }
+
+    if (frame->vector == SYSCALL_VECTOR) {
+        syscall_dispatch(frame);
         return;
     }
 

@@ -13,6 +13,7 @@
 #include "mm/heap.h"
 #include "mm/pmm.h"
 #include "sched/thread.h"
+#include "syscall/syscall.h"
 #include "selftest.h"
 #include "shell.h"
 
@@ -57,6 +58,7 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
 
     heap_init();
     sched_init();
+    syscall_init();
 
     selftest_init(mb_info_addr);
 

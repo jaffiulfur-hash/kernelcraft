@@ -86,6 +86,7 @@ ISR_NOERR 28
 ISR_NOERR 29
 ISR_ERR   30
 ISR_NOERR 31
+ISR_NOERR 128          ; system call vector (int 0x80)
 
 isr_common:
     PUSH_GPRS

@@ -1,5 +1,8 @@
 #include "selftest.h"
 #include "arch/keyboard.h"
+#include "arch/pci.h"
+#include "syscall/syscall.h"
+#include "arch/interrupts.h"
 #include "arch/rtc.h"
 #include "boot/multiboot2.h"
 #include "learn/learn.h"
@@ -518,6 +521,37 @@ static void test_race_conditions(void) {
     CHECK(sync_demo_race(SYNC_ATOMIC) == expected);  /* so does an atomic add */
 }
 
+
+/* ---- PCI, syscalls, quiz ---------------------------------------------- */
+
+static void test_pci(void) {
+    struct pci_device list[PCI_MAX_DEVICES];
+    int n = pci_scan(list, PCI_MAX_DEVICES);
+
+    CHECK(n >= 1);                       /* even a minimal PC has a host bridge */
+    CHECK(list[0].vendor != 0xFFFF);
+    CHECK(pci_class_name(0x06, 0x00) != 0);
+}
+
+static void test_syscalls(void) {
+    static const char text[] = "";
+    uint64_t before = interrupt_count(SYSCALL_VECTOR);
+
+    CHECK(syscall3(SYS_GETPID, 0, 0, 0) == thread_current()->id);
+    CHECK(syscall3(SYS_WRITE, (long)(uintptr_t)text, 0, 0) == 0);
+    CHECK(syscall3(SYS_YIELD, 0, 0, 0) == 0);
+    CHECK(syscall3(SYS_UPTIME_MS, 0, 0, 0) >= 0);
+    CHECK(syscall3(99, 0, 0, 0) == -1);                       /* unknown call */
+    CHECK(syscall3(SYS_WRITE, 0x7FFFFFFFFFFFL, 16, 0) == -1); /* bad pointer */
+    CHECK(syscall3(SYS_WRITE, 0x100000, 100000, 0) == -1);    /* absurd length */
+    CHECK(interrupt_count(SYSCALL_VECTOR) - before == 7);
+}
+
+static void test_quiz_data(void) {
+    CHECK(quiz_question_count() >= 10);
+    CHECK(quiz_validate() == 0);
+}
+
 /* ---- keyboard ring, RTC, glossary, lessons ------------------------------ */
 
 static void test_keyboard_ring(void) {
@@ -570,7 +604,7 @@ static void test_glossary(void) {
 #ifdef KC_SELFTEST
 /* Run every lesson headless: any crash, fault or hang fails the build. */
 static void test_lessons_run(void) {
-    CHECK(learn_lesson_count() >= 12);
+    CHECK(learn_lesson_count() >= 14);
     learn_run_all_auto();
 }
 #endif
@@ -599,6 +633,9 @@ static const struct test_case tests[] = {
     { "keyboard ring",        test_keyboard_ring },
     { "rtc",                  test_rtc },
     { "glossary",             test_glossary },
+    { "pci",                  test_pci },
+    { "syscalls",             test_syscalls },
+    { "quiz data",            test_quiz_data },
 #ifdef KC_SELFTEST
     { "lessons run headless", test_lessons_run },
 #endif

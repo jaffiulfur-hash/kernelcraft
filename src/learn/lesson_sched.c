@@ -197,7 +197,7 @@ void lesson_sched(void) {
     kprintf("  idle thread       we halt inside 'main' instead of running a dummy\n");
     kprintf("  many CPUs         per-CPU run queues, load balancing, IPIs\n");
     kprintf("  processes         each with its own page tables (CR3) and a ring 3 side\n");
-    kprintf("  fairness maths    Linux CFS tracks virtual runtime in a red-black tree\n\n");
+    kprintf("  fairness maths    Linux CFS tracked virtual runtime in a red-black tree\n\n");
     learn_para("What you saw is the real core: a thread table, a saved stack "
                "pointer per thread, a switch routine, and a timer that "
                "enforces turns. Everything fancier is policy built on top.");
