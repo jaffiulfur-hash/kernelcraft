@@ -26,6 +26,12 @@ int kvformat(kformat_emit_fn emit, void *ctx, const char *fmt, va_list ap);
 int kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /*
+ * Like kprintf, but the whole message is emitted with interrupts disabled so
+ * lines from different threads cannot be interleaved character by character.
+ */
+int kprintf_atomic(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/*
  * Format into a buffer, always NUL-terminating when size > 0. Like snprintf,
  * returns the length the full output would have had, so a result >= size
  * means the output was truncated.

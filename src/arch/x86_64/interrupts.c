@@ -1,4 +1,5 @@
 #include "arch/interrupts.h"
+#include "arch/cpu.h"
 #include "arch/debug.h"
 #include "arch/idt.h"
 #include "arch/isr.h"
@@ -6,6 +7,10 @@
 #include "arch/log.h"
 #include "arch/pic.h"
 #include "arch/pit.h"
+#include "sched/thread.h"
+#include "proc/process.h"
+#include "syscall/syscall.h"
+#include "lib/kprintf.h"
 #include "vga.h"
 
 static const char *exception_names[32] = {
@@ -43,6 +48,42 @@ static const char *exception_names[32] = {
     "Reserved"
 };
 
+static uint64_t vector_counts[256];
+
+uint64_t interrupt_count(uint8_t vector) {
+    return vector_counts[vector];
+}
+
+const char *interrupt_vector_name(uint8_t vector) {
+    static const char *irq_names[16] = {
+        "IRQ 0 (timer)", "IRQ 1 (keyboard)", "IRQ 2 (cascade)", "IRQ 3 (COM2)",
+        "IRQ 4 (COM1)", "IRQ 5", "IRQ 6 (floppy)", "IRQ 7 (LPT1)",
+        "IRQ 8 (RTC)", "IRQ 9", "IRQ 10", "IRQ 11", "IRQ 12 (mouse)",
+        "IRQ 13 (FPU)", "IRQ 14 (ATA 1)", "IRQ 15 (ATA 2)"
+    };
+
+    if (vector < 32) {
+        return exception_names[vector];
+    }
+    if (vector < 48) {
+        return irq_names[vector - 32];
+    }
+    if (vector == 0x80) {
+        return "System call";
+    }
+    return "(unused)";
+}
+
+/* Decode the page-fault error code and the faulting address in CR2. */
+static void print_page_fault_details(uint64_t error) {
+    kprintf("page fault at address 0x%016lx\n", read_cr2());
+    kprintf("  cause: %s while %s in %s mode%s\n",
+            (error & 1) ? "protection violation" : "page not present",
+            (error & 2) ? "writing" : "reading",
+            (error & 4) ? "user" : "supervisor",
+            (error & 16) ? " (instruction fetch)" : "");
+}
+
 static void halt_forever(void) {
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -57,9 +98,20 @@ static void print_exception_name(uint64_t vector) {
     }
 }
 
-void interrupt_dispatch(interrupt_frame_t *frame) {
+static void dispatch_inner(interrupt_frame_t *frame) {
+    vector_counts[frame->vector & 0xFF]++;
+
     if (frame->vector < 32) {
         debug_save_last_frame(frame);
+
+        /*
+         * An exception raised by user code is the PROGRAM's fault, not the
+         * kernel's: terminate that process and carry on. (CS low bits = the
+         * privilege level the CPU was in when it happened.)
+         */
+        if ((frame->cs & 3) == 3) {
+            process_fault(frame);
+        }
 
         if (frame->vector == 3) {
             vga_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
@@ -75,6 +127,9 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         log_write("\nEXCEPTION: ");
         print_exception_name(frame->vector);
         log_write("\n");
+        if (frame->vector == 14) {
+            print_page_fault_details(frame->error_code);
+        }
         debug_print_frame(frame);
         halt_forever();
     }
@@ -85,7 +140,15 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         switch (irq) {
             case 0:
                 pit_tick();
-                break;
+                /*
+                 * Acknowledge BEFORE the scheduler runs: sched_tick() may
+                 * switch to another thread and not come back here for a
+                 * long time, and the PIC delivers no more timer interrupts
+                 * until it has seen the EOI.
+                 */
+                pic_send_eoi(0);
+                sched_tick();
+                return;
             case 1:
                 keyboard_handle_scancode();
                 break;
@@ -97,6 +160,11 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         return;
     }
 
+    if (frame->vector == SYSCALL_VECTOR) {
+        syscall_dispatch(frame);
+        return;
+    }
+
     debug_save_last_frame(frame);
 
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
@@ -105,6 +173,15 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
     log_write("\n");
     debug_print_frame(frame);
     halt_forever();
+}
+
+void interrupt_dispatch(interrupt_frame_t *frame) {
+    dispatch_inner(frame);
+
+    /* About to return to user mode: honour a pending `kill`. */
+    if ((frame->cs & 3) == 3) {
+        process_check_kill();
+    }
 }
 
 void interrupts_init(void) {

@@ -1,17 +1,25 @@
 #include "shell.h"
 #include "kernel.h"
 #include "layout.h"
+#include "learn/learn.h"
 #include "panic.h"
 #include "selftest.h"
 #include "vga.h"
 #include "arch/debug.h"
+#include "arch/interrupts.h"
+#include "arch/keyboard.h"
 #include "arch/log.h"
 #include "arch/pit.h"
+#include "arch/rtc.h"
+#include "arch/pci.h"
 #include "arch/power.h"
 #include "arch/serial.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
+#include "sched/thread.h"
+#include "mm/paging.h"
+#include "proc/process.h"
 #include "mm/pmm.h"
 
 #define SHELL_BUFFER_SIZE 128
@@ -101,6 +109,189 @@ static void cmd_uptime(int argc, char **argv) {
 
     kprintf("up %lu.%02lu seconds (%lu ticks at %d Hz)\n", ticks / PIT_HZ,
             (ticks % PIT_HZ) * 100 / PIT_HZ, ticks, PIT_HZ);
+}
+
+static void cmd_date(int argc, char **argv) {
+    struct rtc_time t;
+
+    (void)argc;
+    (void)argv;
+    rtc_read(&t);
+    kprintf("%04d-%02d-%02d %02d:%02d:%02d (RTC, usually UTC)\n", t.year, t.month,
+            t.day, t.hour, t.minute, t.second);
+}
+
+static void cmd_sleep(int argc, char **argv) {
+    uint64_t ms;
+
+    if (argc != 2) {
+        print_usage("sleep <milliseconds>");
+        return;
+    }
+    if (parse_arg(argv[1], "milliseconds", &ms) != 0) {
+        return;
+    }
+
+    thread_sleep_ticks((ms * PIT_HZ + 999) / 1000);
+}
+
+static void cmd_ps(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    kprintf("  id name             mode   state     cpu ticks  switches\n");
+    for (int i = 0; i < MAX_THREADS; i++) {
+        const struct thread *t = sched_thread_at(i);
+
+        if (t) {
+            kprintf("  %2d %-16s %-6s %-9s %9lu  %8lu\n", t->id, t->name,
+                    t->is_user ? "user" : "kernel", thread_state_name(t->state),
+                    t->cpu_ticks, t->switches);
+        }
+    }
+    kprintf("context switches so far: %lu   preemption: %s   quantum: %d ticks\n",
+            sched_switch_count(), sched_preemption_enabled() ? "on" : "off",
+            THREAD_QUANTUM_TICKS);
+}
+
+static void print_result(const struct process_result *r) {
+    switch (r->term) {
+        case TERM_EXITED:
+            kprintf("pid %d (%s) exited with code %d\n", r->pid, r->name, r->exit_code);
+            break;
+        case TERM_FAULT:
+            kprintf("pid %d (%s) was killed by the kernel: %s at rip=0x%lx\n", r->pid,
+                    r->name, interrupt_vector_name((uint8_t)r->fault_vector), r->fault_rip);
+            break;
+        case TERM_KILLED:
+            kprintf("pid %d (%s) was killed\n", r->pid, r->name);
+            break;
+        default:
+            kprintf("pid %d (%s) ended\n", r->pid, r->name);
+            break;
+    }
+}
+
+static void cmd_progs(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    kprintf("%lu user programs built into the kernel (source: user/prog_<name>.c):\n",
+            user_program_count);
+    for (uint64_t i = 0; i < user_program_count; i++) {
+        kprintf("  %-16s %6lu bytes (ELF)\n", user_programs[i].name,
+                (uint64_t)(user_programs[i].end - user_programs[i].start));
+    }
+}
+
+static void cmd_run(int argc, char **argv) {
+    struct thread *started[SHELL_MAX_ARGS];
+    int n = 0;
+
+    if (argc < 2) {
+        print_usage("run <program> [program...]   (see 'progs')");
+        return;
+    }
+
+    /* Start everything first so several programs really run at the same time. */
+    for (int i = 1; i < argc; i++) {
+        const char *why = 0;
+        struct thread *t = process_spawn(argv[i], 0, &why);
+
+        if (!t) {
+            kprintf("cannot start '%s': %s\n", argv[i], why ? why : "unknown error");
+            continue;
+        }
+        started[n++] = t;
+    }
+
+    for (int i = 0; i < n; i++) {
+        struct process_result r;
+
+        process_wait(started[i], &r);
+        print_result(&r);
+    }
+}
+
+static void cmd_spawn(int argc, char **argv) {
+    const char *why = 0;
+
+    if (argc != 2) {
+        print_usage("spawn <program>   (runs in the background; see 'ps', 'kill')");
+        return;
+    }
+
+    struct thread *t = process_spawn(argv[1], 1, &why);
+
+    if (!t) {
+        kprintf("cannot start '%s': %s\n", argv[1], why ? why : "unknown error");
+        return;
+    }
+    kprintf_atomic("started pid %d (%s) in the background\n", t->id, t->name);
+}
+
+static void cmd_kill(int argc, char **argv) {
+    uint64_t pid;
+
+    if (argc != 2) {
+        print_usage("kill <pid>");
+        return;
+    }
+    if (parse_arg(argv[1], "pid", &pid) != 0) {
+        return;
+    }
+
+    kprintf(process_kill((int)pid) == 0 ? "kill requested for pid %lu\n"
+                                        : "no such user process: %lu\n", pid);
+}
+
+static void cmd_vtop(int argc, char **argv) {
+    uint64_t addr;
+    struct paging_walk w;
+
+    if (argc != 2) {
+        print_usage("vtop <virtual address>");
+        return;
+    }
+    if (parse_arg(argv[1], "address", &addr) != 0) {
+        return;
+    }
+
+    paging_walk(addr, &w);
+    paging_print_walk(&w);
+}
+
+static void cmd_learn(int argc, char **argv) {
+    learn_command(argc, argv);
+}
+
+static void cmd_quiz(int argc, char **argv) {
+    quiz_command(argc, argv);
+}
+
+static void cmd_tour(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    learn_tour();
+}
+
+static void cmd_pci(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    pci_print_devices();
+}
+
+static void cmd_glossary(int argc, char **argv) {
+    glossary_command(argc, argv);
+}
+
+static void cmd_pf(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    kprintf("reading unmapped address 0x40000000 (just past the 1 GiB identity map)...\n");
+    volatile uint64_t *p = (volatile uint64_t *)0x40000000ull;
+    uint64_t v = *p;
+    (void)v;
 }
 
 static void cmd_reboot(int argc, char **argv) {
@@ -358,6 +549,19 @@ static const struct shell_command commands[] = {
     { "clear",    "clear",               "clear the screen",                 cmd_clear },
     { "about",    "about",               "show kernel name and stage",       cmd_about },
     { "echo",     "echo [text...]",      "print arguments",                  cmd_echo },
+    { "date",     "date",                "wall-clock time from the RTC",     cmd_date },
+    { "sleep",    "sleep <ms>",          "wait, with the CPU halted",        cmd_sleep },
+    { "vtop",     "vtop <addr>",         "walk the page tables for an address", cmd_vtop },
+    { "progs",    "progs",               "list built-in user programs",      cmd_progs },
+    { "run",      "run <prog>...",       "run user programs in ring 3, wait", cmd_run },
+    { "spawn",    "spawn <prog>",        "start a user program in the background", cmd_spawn },
+    { "kill",     "kill <pid>",          "terminate a user process",         cmd_kill },
+    { "ps",       "ps",                  "list threads and scheduler stats", cmd_ps },
+    { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
+    { "tour",     "tour",                "all lessons in order",             cmd_tour },
+    { "quiz",     "quiz",                "10 questions on how OSes work",    cmd_quiz },
+    { "pci",      "pci",                 "list PCI devices",                 cmd_pci },
+    { "glossary", "glossary [term]",     "look up an OS term",               cmd_glossary },
     { "ticks",    "ticks",               "timer ticks since boot",           cmd_ticks },
     { "uptime",   "uptime",              "time since boot",                  cmd_uptime },
     { "reboot",   "reboot",              "reset the machine",                cmd_reboot },
@@ -366,6 +570,7 @@ static const struct shell_command commands[] = {
     { "panic",    "panic",               "trigger a kernel panic",           cmd_panic },
     { "int3",     "int3",                "trigger a breakpoint trap",        cmd_int3 },
     { "div0",     "div0",                "trigger a divide error",           cmd_div0 },
+    { "pf",       "pf",                  "trigger a page fault",             cmd_pf },
     { "regs",     "regs",                "registers of the last trap",       cmd_regs },
     { "last",     "last",                "alias for regs",                   cmd_regs },
     { "hexdump",  "hexdump <addr> [len]", "dump memory (first 1 GiB only)",  cmd_hexdump },
@@ -389,8 +594,26 @@ static void cmd_help(int argc, char **argv) {
 
     kprintf("commands (numbers: decimal or 0x hex):\n");
 
+    /* More commands than screen rows, so pause every page. This blocks on the
+     * keyboard, which only works because commands run outside the IRQ handler. */
+    int shown = 1;
+
     for (size_t i = 0; i < COMMAND_COUNT; i++) {
+        if (shown == 22) {
+            kprintf("-- Enter: more   q: stop --");
+            char c;
+            do {
+                c = keyboard_getc();
+            } while (c != '\n' && c != 'q' && c != 'Q');
+            kprintf("\n");
+            if (c != '\n') {
+                return;
+            }
+            shown = 0;
+        }
+
         kprintf("  %-22s %s\n", commands[i].usage, commands[i].help);
+        shown++;
     }
 }
 
@@ -432,6 +655,8 @@ static void shell_execute(char *line) {
     if (argc == 0) {
         return;
     }
+
+    sched_reap_detached();       /* free background processes that finished */
 
     for (size_t i = 0; i < COMMAND_COUNT; i++) {
         if (strcmp(argv[0], commands[i].name) == 0) {

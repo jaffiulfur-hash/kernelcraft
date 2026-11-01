@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #define KERNELCRAFT_NAME        "KernelCraft OS"
-#define KERNELCRAFT_STAGE       "4.1"
-#define KERNELCRAFT_STAGE_TITLE "kernel heap, libk and shell upgrade"
+#define KERNELCRAFT_STAGE       "6.0"
+#define KERNELCRAFT_STAGE_TITLE "a kernel that teaches itself"
 
 void kmain(uint32_t mb_magic, uint32_t mb_info_addr);
 

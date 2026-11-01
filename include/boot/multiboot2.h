@@ -54,6 +54,12 @@ const struct multiboot_tag_mmap *mb2_find_mmap_tag(uint32_t mb_info_addr);
 /* Bootloader name tag text (e.g. "GRUB 2.12"), or NULL if absent. */
 const char *mb2_bootloader_name(uint32_t mb_info_addr);
 
+/* Walk every tag: first = mb2_first_tag(addr); next = mb2_next_tag(addr, cur). */
+const struct multiboot_tag *mb2_first_tag(uint32_t mb_info_addr);
+const struct multiboot_tag *mb2_next_tag(uint32_t mb_info_addr,
+                                         const struct multiboot_tag *tag);
+const char *mb2_tag_type_name(uint32_t type);
+
 /* Human-readable name for a MULTIBOOT_MEMORY_* region type. */
 const char *mb2_mmap_type_name(uint32_t type);
 

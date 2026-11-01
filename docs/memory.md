@@ -96,12 +96,26 @@ Known limits, all deliberate for now:
   old region; that waits for paging.
 - **`kfree` is O(n)**: it walks the list to confirm the pointer is genuine
   instead of trusting the header in front of it.
-- **No locking.** Fine while there is one CPU and no tasks.
+- **Locking is "interrupts off".** `kmalloc` and `kfree` disable interrupts
+  while they run, which is a complete lock on one CPU (nothing can preempt
+  them). It would not be enough with several CPUs.
+
+## Address spaces (`aspace.c`)
+
+User processes each get a private PML4. Entry 0 of the new PDPT is copied from
+the boot tables, so the kernel's gigabyte is shared by every process but keeps
+its supervisor-only entries; entry 1 points at a private page directory and
+page table for the 2 MiB user window at `0x40000000`. ELF segments are mapped
+into it page by page with their own permissions (code r-x, data rw- and NX).
+`aspace_destroy` returns every frame, and the tests assert that nothing leaks.
+See `learn aspace` for the live view.
 
 ## Self-tests
 
 `src/selftest.c` checks the string helpers, `kprintf`, the PMM (including bad
-frees and contiguous runs) and the heap (alignment, overlap, reuse,
-coalescing, exhaustion). Run it with the shell's `selftest` command, or with
+frees and contiguous runs), the heap (alignment, overlap, reuse, coalescing,
+exhaustion), the scheduler (round-robin order, sleep, timer preemption, race
+conditions and their fixes), PCI, syscalls, and - in the `make test` build -
+runs every lesson headless. Run it with the shell's `selftest` command, or with
 `make test`, which boots a `-DKC_SELFTEST` build headless and reads the result
 from QEMU's exit status via the `isa-debug-exit` device.

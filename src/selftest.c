@@ -1,10 +1,25 @@
 #include "selftest.h"
+#include "arch/cpu.h"
+#include "arch/gdt.h"
+#include "arch/keyboard.h"
+#include "arch/pci.h"
+#include "syscall/syscall.h"
+#include "arch/interrupts.h"
+#include "arch/rtc.h"
 #include "boot/multiboot2.h"
+#include "learn/learn.h"
 #include "layout.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
+#include "mm/aspace.h"
+#include "mm/paging.h"
 #include "mm/pmm.h"
+#include "proc/elf.h"
+#include "proc/process.h"
+#include "sched/sync.h"
+#include "sched/thread.h"
+#include "arch/pit.h"
 
 static uint32_t boot_info_addr;
 static int check_failures;
@@ -52,6 +67,11 @@ static void test_string(void) {
     CHECK(strncmp("abcd", "abzz", 2) == 0);
     CHECK(strncmp("abcd", "abzz", 3) < 0);
     CHECK(strncmp("a", "b", 0) == 0);
+
+    CHECK(strcasecmp("Page Fault", "page fault") == 0);
+    CHECK(strcasecmp("abc", "abd") < 0);
+    CHECK(strncasecmp("HELLO", "help", 3) == 0);
+    CHECK(strncasecmp("HELLO", "help", 4) != 0);
 
     memset(a, 0xAB, sizeof(a));
     CHECK(a[0] == 0xAB && a[7] == 0xAB);
@@ -398,6 +418,361 @@ static void test_heap_exhaustion(void) {
     CHECK(stats_equal(&before, &after));
 }
 
+
+
+/* ---- scheduler -------------------------------------------------------- */
+
+static volatile int order_log[32];
+static volatile int order_n;
+static volatile uint64_t slept_ticks;
+static volatile int stop_flag;
+static volatile uint64_t spin_count[2];
+static void order_thread(void *arg) {
+    for (int i = 0; i < 3; i++) {
+        order_log[order_n++] = (int)(intptr_t)arg;
+        thread_yield();
+    }
+}
+
+static void sleeper(void *arg) {
+    uint64_t t0 = pit_get_ticks();
+
+    (void)arg;
+    thread_sleep_ticks(10);
+    slept_ticks = pit_get_ticks() - t0;
+}
+
+static void spinner(void *arg) {
+    int which = (int)(intptr_t)arg;
+
+    while (!stop_flag) {
+        spin_count[which]++;
+    }
+}
+
+static void test_threads_cooperative(void) {
+    struct heap_stats before, after;
+    struct thread *t[3];
+    int was = sched_preemption_enabled();
+
+    heap_get_stats(&before);
+    sched_set_preemption(0);
+    order_n = 0;
+
+    for (int i = 0; i < 3; i++) {
+        t[i] = thread_create("order", order_thread, (void *)(intptr_t)(i + 1));
+        CHECK(t[i] != 0);
+    }
+    for (int i = 0; i < 3; i++) {
+        CHECK(t[i] && thread_join(t[i]) == 0);
+    }
+    sched_set_preemption(was);
+
+    /* Round robin must give 1 2 3 1 2 3 1 2 3. */
+    int ok = (order_n == 9);
+    for (int k = 0; k < 9 && ok; k++) {
+        ok = (order_log[k] == (k % 3) + 1);
+    }
+    CHECK(ok);
+
+    CHECK(thread_join(t[0]) == -1);                 /* already joined */
+    CHECK(thread_join(thread_current()) == -1);     /* cannot join self */
+    CHECK(sched_thread_at(1) == 0);                 /* slots released */
+
+    heap_get_stats(&after);
+    CHECK(stats_equal(&before, &after));            /* stacks were freed */
+    CHECK(heap_check() == 0);
+}
+
+static void test_threads_sleep(void) {
+    struct thread *t = thread_create("sleeper", sleeper, 0);
+
+    slept_ticks = 0;
+    CHECK(t != 0);
+    CHECK(t && thread_join(t) == 0);
+    CHECK(slept_ticks >= 10);
+    CHECK(slept_ticks < 40);
+}
+
+static void test_threads_preemption(void) {
+    uint64_t switches0 = sched_switch_count();
+    int was = sched_preemption_enabled();
+
+    stop_flag = 0;
+    spin_count[0] = spin_count[1] = 0;
+    sched_set_preemption(1);
+
+    struct thread *a = thread_create("spin-a", spinner, (void *)0);
+    struct thread *b = thread_create("spin-b", spinner, (void *)1);
+
+    CHECK(a && b);
+    thread_sleep_ticks(40);              /* main waits; the timer must rotate them */
+    stop_flag = 1;
+    if (a) thread_join(a);
+    if (b) thread_join(b);
+    sched_set_preemption(was);
+
+    /* Neither spinner ever yields: only the timer interrupt can have
+     * switched between them, so both running proves preemption works. */
+    CHECK(spin_count[0] > 0);
+    CHECK(spin_count[1] > 0);
+    CHECK(sched_switch_count() - switches0 >= 4);
+}
+
+static void test_race_conditions(void) {
+    uint64_t expected = SYNC_ITERS * SYNC_THREADS;
+
+    CHECK(sync_demo_race(SYNC_UNSAFE) < expected);   /* updates were lost */
+    CHECK(sync_demo_race(SYNC_MUTEX) == expected);   /* mutex fixes it */
+    CHECK(sync_demo_race(SYNC_ATOMIC) == expected);  /* so does an atomic add */
+}
+
+
+/* ---- PCI, syscalls, quiz ---------------------------------------------- */
+
+static void test_pci(void) {
+    struct pci_device list[PCI_MAX_DEVICES];
+    int n = pci_scan(list, PCI_MAX_DEVICES);
+
+    CHECK(n >= 1);                       /* even a minimal PC has a host bridge */
+    CHECK(list[0].vendor != 0xFFFF);
+    CHECK(pci_class_name(0x06, 0x00) != 0);
+}
+
+static void test_syscalls(void) {
+    static const char text[] = "";
+    uint64_t before = interrupt_count(SYSCALL_VECTOR);
+
+    CHECK(syscall3(SYS_GETPID, 0, 0, 0) == thread_current()->id);
+    CHECK(syscall3(SYS_WRITE, (long)(uintptr_t)text, 0, 0) == 0);
+    CHECK(syscall3(SYS_YIELD, 0, 0, 0) == 0);
+    CHECK(syscall3(SYS_UPTIME_MS, 0, 0, 0) >= 0);
+    CHECK(syscall3(99, 0, 0, 0) == -1);                       /* unknown call */
+    CHECK(syscall3(SYS_WRITE, 0x7FFFFFFFFFFFL, 16, 0) == -1); /* bad pointer */
+    CHECK(syscall3(SYS_WRITE, 0x100000, 100000, 0) == -1);    /* absurd length */
+    CHECK(interrupt_count(SYSCALL_VECTOR) - before == 7);
+}
+
+static void test_quiz_data(void) {
+    CHECK(quiz_question_count() >= 10);
+    CHECK(quiz_validate() == 0);
+}
+
+
+/* ---- user mode -------------------------------------------------------- */
+
+static void test_gdt_user_segments(void) {
+    struct dtr g;
+
+    sgdt(&g);
+    CHECK(g.limit == 7 * 8 - 1);                         /* null, 4 segments, 2-slot TSS */
+
+    const uint64_t *t = (const uint64_t *)(uintptr_t)g.base;
+
+    CHECK(((t[3] >> 40) & 0xFF) == 0xF2);                /* user data: present, DPL 3, writable */
+    CHECK(((t[4] >> 40) & 0xFF) == 0xFA);                /* user code: present, DPL 3, readable */
+    CHECK(((t[4] >> 53) & 1) == 1);                      /* ...with the 64-bit (L) flag */
+    CHECK((((t[5] >> 40) & 0xFF) & 0xF9) == 0x89);       /* TSS: 0x89 available, 0x8B once ltr made it busy */
+    CHECK((GDT_USER_CODE & 3) == 3 && (GDT_USER_DATA & 3) == 3);
+    CHECK(gdt_tss_address() != 0);
+    CHECK(aspace_nx_enabled());
+}
+
+static void test_address_space(void) {
+    uint64_t alloc0 = pmm_allocated_frame_count();
+    struct heap_stats before, after;
+    struct paging_walk w;
+
+    heap_get_stats(&before);
+    struct aspace *as = aspace_create();
+
+    CHECK(as != 0);
+    if (!as) {
+        return;
+    }
+
+    uint64_t code = aspace_map_new_page(as, USER_BASE, 0, 1);
+    uint64_t data = aspace_map_new_page(as, USER_BASE + 0x1000, 1, 0);
+
+    CHECK(code && data && code != data);
+    CHECK(aspace_map_new_page(as, USER_BASE, 1, 0) == 0);          /* already mapped */
+    CHECK(aspace_map_new_page(as, USER_LIMIT, 1, 0) == 0);         /* outside the window */
+    CHECK(aspace_map_new_page(as, USER_BASE + 0x2001, 1, 0) == 0); /* unaligned */
+
+    CHECK(aspace_user_range_ok(as, USER_BASE, 100, 0));
+    CHECK(!aspace_user_range_ok(as, USER_BASE, 100, 1));           /* code page is read-only */
+    CHECK(aspace_user_range_ok(as, USER_BASE + 0x1000, 100, 1));   /* data page is writable */
+    CHECK(!aspace_user_range_ok(as, USER_BASE + 0x1FF0, 64, 0));   /* runs into an unmapped page */
+    CHECK(!aspace_user_range_ok(as, 0x100000, 16, 0));             /* kernel address */
+    CHECK(!aspace_user_range_ok(as, USER_LIMIT - 8, 16, 0));       /* past the window */
+    CHECK(!aspace_user_range_ok(as, USER_BASE, (uint64_t)-1, 0));  /* overflow */
+
+    /* Walk the NEW tables: user pages are reachable from ring 3, the kernel's are not. */
+    CHECK(paging_walk_cr3(as->cr3, USER_BASE, &w) == 0 && w.phys == code);
+    CHECK((w.entry[0] & PTE_USER) && (w.entry[1] & PTE_USER) && (w.entry[2] & PTE_USER) &&
+          (w.entry[3] & PTE_USER));
+    CHECK(paging_walk_cr3(as->cr3, USER_BASE + 0x1000, &w) == 0 && (w.entry[3] & PTE_NX));
+    CHECK(paging_walk_cr3(as->cr3, 0x100000, &w) == 0 && !(w.entry[2] & PTE_USER));
+    CHECK(paging_walk_cr3(as->cr3, 0x80000000ull, &w) != 0);       /* nothing mapped */
+
+    aspace_destroy(as);
+    CHECK(pmm_allocated_frame_count() == alloc0);                   /* every frame came back */
+    heap_get_stats(&after);
+    CHECK(stats_equal(&before, &after));
+}
+
+static void test_elf_loader(void) {
+    const struct user_program *hello = process_find_program("hello");
+    uint8_t buf[64 + 56];
+
+    CHECK(hello != 0);
+    if (!hello) {
+        return;
+    }
+
+    size_t size = (size_t)(hello->end - hello->start);
+
+    CHECK(elf_check(hello->start, size) == 0);
+    CHECK(elf_check(hello->start, 10) != 0);                        /* truncated */
+
+    memcpy(buf, hello->start, sizeof(buf));
+    buf[0] = 0;
+    CHECK(elf_check(buf, sizeof(buf)) != 0);                        /* bad magic */
+
+    memcpy(buf, hello->start, sizeof(buf));
+    buf[4] = 1;
+    CHECK(elf_check(buf, sizeof(buf)) != 0);                        /* 32-bit ELF */
+
+    memcpy(buf, hello->start, sizeof(buf));
+    ((struct elf64_ehdr *)buf)->machine = 0x28;
+    CHECK(elf_check(buf, sizeof(buf)) != 0);                        /* wrong CPU */
+
+    /* A malicious segment aimed at kernel memory must be refused, not loaded. */
+    memcpy(buf, hello->start, sizeof(buf));
+    struct elf64_ehdr *eh = (struct elf64_ehdr *)buf;
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + eh->phoff);
+    struct aspace *as = aspace_create();
+    uint64_t entry = 0;
+
+    eh->phnum = 1;
+    ph->offset = 0;
+    ph->filesz = 0;
+    ph->memsz = 4096;
+    ph->vaddr = 0x100000;                                           /* the kernel image! */
+    CHECK(as && elf_load(as, buf, sizeof(buf), &entry) != 0);
+    aspace_destroy(as);
+}
+
+static void test_user_processes(void) {
+    uint64_t alloc0 = pmm_allocated_frame_count();
+    struct heap_stats before, after;
+    struct process_result r;
+    const char *why = 0;
+    struct thread *t;
+
+    heap_get_stats(&before);
+
+    t = process_spawn("hello", 0, &why);
+    CHECK(t && process_wait(t, &r) == 0);
+    CHECK(r.term == TERM_EXITED && r.exit_code == 0);
+
+    t = process_spawn("badptr", 0, &why);                           /* kernel refuses hostile pointers */
+    CHECK(t && process_wait(t, &r) == 0);
+    CHECK(r.term == TERM_EXITED && r.exit_code == 0);
+
+    t = process_spawn("crash_kernel", 0, &why);                     /* supervisor-only page */
+    CHECK(t && process_wait(t, &r) == 0);
+    CHECK(r.term == TERM_FAULT && r.fault_vector == 14 && r.fault_addr == 0x100000);
+
+    t = process_spawn("crash_unmapped", 0, &why);                   /* page not present */
+    CHECK(t && process_wait(t, &r) == 0);
+    CHECK(r.term == TERM_FAULT && r.fault_vector == 14 && r.fault_addr == 0x80000000ull);
+
+    t = process_spawn("privileged", 0, &why);                       /* cli in ring 3 */
+    CHECK(t && process_wait(t, &r) == 0);
+    CHECK(r.term == TERM_FAULT && r.fault_vector == 13);
+
+    /* Same program twice, concurrently: both must see their own memory. */
+    struct thread *a = process_spawn("isolate", 0, &why);
+    struct thread *b = process_spawn("isolate", 0, &why);
+    CHECK(a && b && a != b);
+    CHECK(a && process_wait(a, &r) == 0 && r.term == TERM_EXITED && r.exit_code == 0);
+    CHECK(b && process_wait(b, &r) == 0 && r.term == TERM_EXITED && r.exit_code == 0);
+
+    /* A runaway process is preempted, then killed on request. */
+    t = process_spawn("spin", 0, &why);
+    CHECK(t != 0);
+    thread_sleep_ticks(20);
+    CHECK(t && process_kill(t->id) == 0);
+    CHECK(t && process_wait(t, &r) == 0 && r.term == TERM_KILLED);
+
+    CHECK(process_spawn("no_such_program", 0, &why) == 0 && why != 0);
+    CHECK(process_kill(9999) == -1);
+
+    /* Everything a process owned (kernel stack, page tables, user pages) was released. */
+    CHECK(pmm_allocated_frame_count() == alloc0);
+    heap_get_stats(&after);
+    CHECK(stats_equal(&before, &after));
+    CHECK(heap_check() == 0);
+}
+
+/* ---- keyboard ring, RTC, glossary, lessons ------------------------------ */
+
+static void test_keyboard_ring(void) {
+    char c;
+    int kept = 0;
+
+    while (keyboard_try_read(&c)) {
+    }
+    CHECK(!keyboard_try_read(&c));
+
+    keyboard_push_char('a');
+    keyboard_push_char('b');
+    CHECK(keyboard_try_read(&c) && c == 'a');
+    CHECK(keyboard_try_read(&c) && c == 'b');
+    CHECK(!keyboard_try_read(&c));
+
+    /* Overfilling drops the extra keystrokes instead of corrupting the ring. */
+    for (int i = 0; i < 100; i++) {
+        keyboard_push_char((char)('A' + i % 26));
+    }
+    CHECK(keyboard_try_read(&c) && c == 'A');
+    kept = 1;
+    while (keyboard_try_read(&c)) {
+        kept++;
+    }
+    CHECK(kept == 63);          /* a 64-slot ring holds 63 */
+
+    /* keyboard_getc returns an already-queued character without sleeping. */
+    keyboard_push_char('z');
+    CHECK(keyboard_getc() == 'z');
+}
+
+static void test_rtc(void) {
+    struct rtc_time t;
+
+    rtc_read(&t);
+    CHECK(t.year >= 2000 && t.year < 2100);
+    CHECK(t.month >= 1 && t.month <= 12);
+    CHECK(t.day >= 1 && t.day <= 31);
+    CHECK(t.hour < 24 && t.minute < 60 && t.second < 60);
+}
+
+static void test_glossary(void) {
+    CHECK(glossary_term_count() > 30);
+    CHECK(glossary_lookup("PAGE FAULT") != 0);
+    CHECK(glossary_lookup("gdt") != 0);
+    CHECK(glossary_lookup("no such term") == 0);
+}
+
+#ifdef KC_SELFTEST
+/* Run every lesson headless: any crash, fault or hang fails the build. */
+static void test_lessons_run(void) {
+    CHECK(learn_lesson_count() >= 17);
+    learn_run_all_auto();
+}
+#endif
+
 /* ---- runner ----------------------------------------------------------- */
 
 struct test_case {
@@ -415,6 +790,23 @@ static const struct test_case tests[] = {
     { "heap: calloc",         test_heap_calloc },
     { "heap: fragmentation",  test_heap_fragmentation },
     { "heap: exhaustion",     test_heap_exhaustion },
+    { "threads: round robin", test_threads_cooperative },
+    { "threads: sleep",       test_threads_sleep },
+    { "threads: preemption",  test_threads_preemption },
+    { "threads: races",       test_race_conditions },
+    { "user: gdt and tss",    test_gdt_user_segments },
+    { "user: address space",  test_address_space },
+    { "user: elf loader",     test_elf_loader },
+    { "user: processes",      test_user_processes },
+    { "keyboard ring",        test_keyboard_ring },
+    { "rtc",                  test_rtc },
+    { "glossary",             test_glossary },
+    { "pci",                  test_pci },
+    { "syscalls",             test_syscalls },
+    { "quiz data",            test_quiz_data },
+#ifdef KC_SELFTEST
+    { "lessons run headless", test_lessons_run },
+#endif
 };
 
 int selftest_run(void) {

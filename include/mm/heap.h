@@ -12,14 +12,15 @@
  * Every allocation is preceded by a 32-byte header and rounded up to a
  * multiple of 16 bytes, so returned pointers are 16-byte aligned.
  *
- * There is no locking. That is fine today (one CPU, and the shell, which runs
- * inside the keyboard IRQ handler, is the only caller), but an interrupt
- * handler must never allocate while the code it interrupted is inside the
- * allocator.
+ * Thread safety: kmalloc, kfree and the stats/check helpers run with
+ * interrupts disabled, which is a complete lock on one CPU because the timer
+ * interrupt is what drives preemption. heap_walk() is not locked since it
+ * calls back into arbitrary code.
  */
 
 #define HEAP_FRAMES 256                       /* 1 MiB */
 #define HEAP_ALIGN  16
+#define HEAP_HEADER_SIZE 32                   /* bytes before every payload */
 
 struct heap_stats {
     size_t total_bytes;      /* size of the whole region, headers included */
@@ -49,5 +50,12 @@ int heap_is_live_ptr(const void *ptr);
 int heap_check(void);
 
 void heap_dump(void);
+
+/*
+ * Visit every block in address order: fn(payload, size, used, ctx). Return
+ * nonzero from fn to stop early. Used by the heap lesson to draw the heap.
+ */
+typedef int (*heap_walk_fn)(void *payload, size_t size, int used, void *ctx);
+void heap_walk(heap_walk_fn fn, void *ctx);
 
 #endif

@@ -7,10 +7,14 @@
 #include "arch/pit.h"
 #include "arch/power.h"
 #include "arch/qemu.h"
+#include "boot/bootinfo.h"
 #include "boot/multiboot2.h"
 #include "lib/kprintf.h"
+#include "mm/aspace.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
+#include "sched/thread.h"
+#include "syscall/syscall.h"
 #include "selftest.h"
 #include "shell.h"
 
@@ -19,6 +23,7 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
 
     log_init();
+    bootinfo_init(mb_magic, mb_info_addr);
 
     kprintf("%s\n", KERNELCRAFT_NAME);
     kprintf("stage %s: %s\n", KERNELCRAFT_STAGE, KERNELCRAFT_STAGE_TITLE);
@@ -53,6 +58,9 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
     pmm_print_summary();
 
     heap_init();
+    aspace_init();
+    sched_init();
+    syscall_init();
 
     selftest_init(mb_info_addr);
 
@@ -65,7 +73,12 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
 
     shell_prompt();
 
+    /*
+     * The keyboard interrupt only queues characters. All the real work - the
+     * shell, lessons, anything that blocks - runs here, in ordinary context
+     * with interrupts enabled, and sleeps in keyboard_getc() when idle.
+     */
     for (;;) {
-        __asm__ volatile ("hlt");
+        shell_handle_char(keyboard_getc());
     }
 }
