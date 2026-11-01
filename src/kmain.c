@@ -5,8 +5,13 @@
 #include "arch/keyboard.h"
 #include "arch/log.h"
 #include "arch/pit.h"
+#include "arch/power.h"
+#include "arch/qemu.h"
 #include "boot/multiboot2.h"
+#include "lib/kprintf.h"
+#include "mm/heap.h"
 #include "mm/pmm.h"
+#include "selftest.h"
 #include "shell.h"
 
 void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
@@ -15,14 +20,17 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
 
     log_init();
 
-    log_write("KernelCraft OS\n");
-    log_write("stage 4.0: physical memory manager\n");
+    kprintf("%s\n", KERNELCRAFT_NAME);
+    kprintf("stage %s: %s\n", KERNELCRAFT_STAGE, KERNELCRAFT_STAGE_TITLE);
 
     if (mb_magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
-        log_write("invalid multiboot2 magic\n");
-        for (;;) {
-            __asm__ volatile ("cli; hlt");
-        }
+        kprintf("invalid multiboot2 magic: 0x%08x\n", mb_magic);
+        arch_halt();
+    }
+
+    const char *loader = mb2_bootloader_name(mb_info_addr);
+    if (loader) {
+        kprintf("bootloader: %s\n", loader);
     }
 
     gdt_init();
@@ -31,14 +39,29 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
     interrupts_init();
     log_write("interrupts loaded\n");
 
-    pit_init(100);
+    pit_init(PIT_HZ);
     keyboard_init();
     shell_init();
 
-    log_write("pit started at 100 Hz\n");
+    kprintf("pit started at %d Hz\n", PIT_HZ);
     log_write("keyboard ready\n");
 
     pmm_init(mb2_find_mmap_tag(mb_info_addr));
+
+    /* The boot info block (and the mmap inside it) lives in ordinary RAM. */
+    pmm_reserve_range(mb_info_addr, mb2_info_size(mb_info_addr));
+    pmm_print_summary();
+
+    heap_init();
+
+    selftest_init(mb_info_addr);
+
+#ifdef KC_SELFTEST
+    /* `make test`: run the suite headless and report through QEMU's exit code. */
+    int failed = selftest_run();
+    qemu_exit(failed ? QEMU_EXIT_FAILURE : QEMU_EXIT_SUCCESS);
+    kprintf("isa-debug-exit device not present; continuing to shell\n");
+#endif
 
     shell_prompt();
 

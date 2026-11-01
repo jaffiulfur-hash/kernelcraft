@@ -3,6 +3,8 @@
 
 void shell_init(void);
 void shell_prompt(void);
+
+/* Feed one typed character (printable ASCII, '\n' or '\b') to the shell. */
 void shell_handle_char(char c);
 
 #endif

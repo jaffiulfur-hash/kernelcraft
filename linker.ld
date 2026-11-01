@@ -4,6 +4,9 @@ SECTIONS
 {
     . = 1M;
 
+    /* First byte of the kernel image (physical == virtual, identity mapped). */
+    __kernel_start = .;
+
     .multiboot : ALIGN(8)
     {
         KEEP(*(.multiboot))
@@ -28,5 +31,15 @@ SECTIONS
     {
         *(COMMON)
         *(.bss*)
+    }
+
+    /* One byte past the end of the kernel image, rounded up to a frame. */
+    . = ALIGN(4K);
+    __kernel_end = .;
+
+    /DISCARD/ :
+    {
+        *(.note.GNU-stack)
+        *(.comment)
     }
 }
