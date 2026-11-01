@@ -1,5 +1,6 @@
 #include "mm/heap.h"
 #include "mm/pmm.h"
+#include "arch/cpu.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "panic.h"
@@ -88,7 +89,7 @@ static void split_block(struct heap_block *b, size_t size) {
     b->size = size;
 }
 
-void *kmalloc(size_t size) {
+static void *kmalloc_unlocked(size_t size) {
     if (!first_block || size == 0 || size > HEAP_BYTES) {
         return 0;
     }
@@ -136,13 +137,13 @@ static struct heap_block *find_block(const void *ptr) {
     return 0;
 }
 
-int heap_is_live_ptr(const void *ptr) {
+static int heap_is_live_ptr_unlocked(const void *ptr) {
     struct heap_block *b = find_block(ptr);
 
     return b && b->magic == MAGIC_USED;
 }
 
-void kfree(void *ptr) {
+static void kfree_unlocked(void *ptr) {
     if (!ptr) {
         return;
     }
@@ -180,7 +181,7 @@ void kfree(void *ptr) {
     }
 }
 
-void heap_get_stats(struct heap_stats *out) {
+static void heap_get_stats_unlocked(struct heap_stats *out) {
     memset(out, 0, sizeof(*out));
     out->total_bytes = HEAP_BYTES;
 
@@ -200,7 +201,7 @@ void heap_get_stats(struct heap_stats *out) {
     }
 }
 
-int heap_check(void) {
+static int heap_check_unlocked(void) {
     if (!first_block) {
         return -1;
     }
@@ -257,4 +258,49 @@ void heap_walk(heap_walk_fn fn, void *ctx) {
             return;
         }
     }
+}
+
+/*
+ * Locking: each public entry point below runs with interrupts disabled. On
+ * one CPU that is a complete mutual exclusion - the timer interrupt is what
+ * drives preemption, so with it off no other thread can run. heap_walk() is
+ * left unlocked on purpose because it calls back into arbitrary code.
+ */
+
+void *kmalloc(size_t size) {
+    uint64_t flags = irq_save();
+    void *result = kmalloc_unlocked(size);
+
+    irq_restore(flags);
+    return result;
+}
+
+void kfree(void *ptr) {
+    uint64_t flags = irq_save();
+
+    kfree_unlocked(ptr);
+    irq_restore(flags);
+}
+
+int heap_is_live_ptr(const void *ptr) {
+    uint64_t flags = irq_save();
+    int result = heap_is_live_ptr_unlocked(ptr);
+
+    irq_restore(flags);
+    return result;
+}
+
+int heap_check(void) {
+    uint64_t flags = irq_save();
+    int result = heap_check_unlocked();
+
+    irq_restore(flags);
+    return result;
+}
+
+void heap_get_stats(struct heap_stats *out) {
+    uint64_t flags = irq_save();
+
+    heap_get_stats_unlocked(out);
+    irq_restore(flags);
 }

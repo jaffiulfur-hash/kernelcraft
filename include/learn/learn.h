@@ -66,6 +66,16 @@ void lesson_keyboard(void);
 void lesson_pmm(void);
 void lesson_paging(void);
 void lesson_heap(void);
+void lesson_sched(void);
+void lesson_sync(void);
+
+/* The race demo behind the sync lesson; also used by the self-tests. */
+#define SYNC_UNSAFE  0
+#define SYNC_MUTEX   1
+#define SYNC_ATOMIC  2
+#define SYNC_ITERS   50
+#define SYNC_THREADS 3
+uint64_t sync_demo_race(int mode);
 
 /* ---- glossary --------------------------------------------------------- */
 void glossary_command(int argc, char **argv);

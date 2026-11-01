@@ -1,4 +1,5 @@
 #include "lib/kprintf.h"
+#include "arch/cpu.h"
 #include "arch/log.h"
 
 struct sink {
@@ -216,6 +217,17 @@ int kprintf(const char *fmt, ...) {
     va_start(ap, fmt);
     int n = kvformat(log_emit, 0, fmt, ap);
     va_end(ap);
+    return n;
+}
+
+int kprintf_atomic(const char *fmt, ...) {
+    uint64_t flags = irq_save();
+    va_list ap;
+
+    va_start(ap, fmt);
+    int n = kvformat(log_emit, 0, fmt, ap);
+    va_end(ap);
+    irq_restore(flags);
     return n;
 }
 

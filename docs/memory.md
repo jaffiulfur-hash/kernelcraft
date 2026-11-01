@@ -96,7 +96,9 @@ Known limits, all deliberate for now:
   old region; that waits for paging.
 - **`kfree` is O(n)**: it walks the list to confirm the pointer is genuine
   instead of trusting the header in front of it.
-- **No locking.** Fine while there is one CPU and no tasks.
+- **Locking is "interrupts off".** `kmalloc` and `kfree` disable interrupts
+  while they run, which is a complete lock on one CPU (nothing can preempt
+  them). It would not be enough with several CPUs.
 
 ## Self-tests
 

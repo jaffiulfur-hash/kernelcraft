@@ -14,6 +14,7 @@
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
+#include "sched/thread.h"
 #include "mm/paging.h"
 #include "mm/pmm.h"
 
@@ -127,11 +128,25 @@ static void cmd_sleep(int argc, char **argv) {
         return;
     }
 
-    /* Interrupts are on in the main loop, so hlt wakes on every timer tick. */
-    uint64_t until = pit_get_ticks() + (ms * PIT_HZ + 999) / 1000;
-    while (pit_get_ticks() < until) {
-        __asm__ volatile ("hlt");
+    thread_sleep_ticks((ms * PIT_HZ + 999) / 1000);
+}
+
+static void cmd_ps(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    kprintf("  id name             state     cpu ticks  switches\n");
+    for (int i = 0; i < MAX_THREADS; i++) {
+        const struct thread *t = sched_thread_at(i);
+
+        if (t) {
+            kprintf("  %2d %-16s %-9s %9lu  %8lu\n", t->id, t->name,
+                    thread_state_name(t->state), t->cpu_ticks, t->switches);
+        }
     }
+    kprintf("context switches so far: %lu   preemption: %s   quantum: %d ticks\n",
+            sched_switch_count(), sched_preemption_enabled() ? "on" : "off",
+            THREAD_QUANTUM_TICKS);
 }
 
 static void cmd_vtop(int argc, char **argv) {
@@ -425,6 +440,7 @@ static const struct shell_command commands[] = {
     { "date",     "date",                "wall-clock time from the RTC",     cmd_date },
     { "sleep",    "sleep <ms>",          "wait, with the CPU halted",        cmd_sleep },
     { "vtop",     "vtop <addr>",         "walk the page tables for an address", cmd_vtop },
+    { "ps",       "ps",                  "list threads and scheduler stats", cmd_ps },
     { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
     { "glossary", "glossary [term]",     "look up an OS term",               cmd_glossary },
     { "ticks",    "ticks",               "timer ticks since boot",           cmd_ticks },

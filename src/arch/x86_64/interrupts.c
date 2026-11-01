@@ -7,6 +7,7 @@
 #include "arch/log.h"
 #include "arch/pic.h"
 #include "arch/pit.h"
+#include "sched/thread.h"
 #include "lib/kprintf.h"
 #include "vga.h"
 
@@ -128,7 +129,15 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         switch (irq) {
             case 0:
                 pit_tick();
-                break;
+                /*
+                 * Acknowledge BEFORE the scheduler runs: sched_tick() may
+                 * switch to another thread and not come back here for a
+                 * long time, and the PIC delivers no more timer interrupts
+                 * until it has seen the EOI.
+                 */
+                pic_send_eoi(0);
+                sched_tick();
+                return;
             case 1:
                 keyboard_handle_scancode();
                 break;

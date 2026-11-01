@@ -1,4 +1,5 @@
 #include "mm/pmm.h"
+#include "arch/cpu.h"
 #include "arch/log.h"
 #include "layout.h"
 #include "lib/kprintf.h"
@@ -106,7 +107,7 @@ static void mark_range_available(uint64_t start, uint64_t length) {
     }
 }
 
-void pmm_reserve_range(uint64_t start, uint64_t length) {
+static void pmm_reserve_range_unlocked(uint64_t start, uint64_t length) {
     uint64_t end = start + length;
 
     if (!clamp_range(&start, &end)) {
@@ -197,7 +198,7 @@ void pmm_dump_mmap(void) {
     kprintf("kernel image:\n  0x%016lx - 0x%016lx\n", KERNEL_START, KERNEL_END);
 }
 
-uint64_t pmm_alloc_contiguous(size_t count) {
+static uint64_t pmm_alloc_contiguous_unlocked(size_t count) {
     if (count == 0 || count > free_frames) {
         return 0;
     }
@@ -234,7 +235,7 @@ uint64_t pmm_alloc_frame(void) {
     return pmm_alloc_contiguous(1);
 }
 
-int pmm_free_frames(uint64_t phys_addr, size_t count) {
+static int pmm_free_frames_unlocked(uint64_t phys_addr, size_t count) {
     if (count == 0 || (phys_addr % PMM_FRAME_SIZE) != 0) {
         return -1;
     }
@@ -298,4 +299,29 @@ uint64_t pmm_reserved_frame_count(void) {
 
 uint64_t pmm_allocated_frame_count(void) {
     return used_frames - reserved_frames;
+}
+
+/* Public entry points: disable interrupts around the bitmap updates. */
+
+uint64_t pmm_alloc_contiguous(size_t count) {
+    uint64_t flags = irq_save();
+    uint64_t result = pmm_alloc_contiguous_unlocked(count);
+
+    irq_restore(flags);
+    return result;
+}
+
+int pmm_free_frames(uint64_t phys_addr, size_t count) {
+    uint64_t flags = irq_save();
+    int result = pmm_free_frames_unlocked(phys_addr, count);
+
+    irq_restore(flags);
+    return result;
+}
+
+void pmm_reserve_range(uint64_t start, uint64_t length) {
+    uint64_t flags = irq_save();
+
+    pmm_reserve_range_unlocked(start, length);
+    irq_restore(flags);
 }

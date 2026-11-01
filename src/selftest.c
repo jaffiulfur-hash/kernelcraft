@@ -8,6 +8,9 @@
 #include "lib/string.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
+#include "sched/sync.h"
+#include "sched/thread.h"
+#include "arch/pit.h"
 
 static uint32_t boot_info_addr;
 static int check_failures;
@@ -407,6 +410,114 @@ static void test_heap_exhaustion(void) {
 }
 
 
+
+/* ---- scheduler -------------------------------------------------------- */
+
+static volatile int order_log[32];
+static volatile int order_n;
+static volatile uint64_t slept_ticks;
+static volatile int stop_flag;
+static volatile uint64_t spin_count[2];
+static void order_thread(void *arg) {
+    for (int i = 0; i < 3; i++) {
+        order_log[order_n++] = (int)(intptr_t)arg;
+        thread_yield();
+    }
+}
+
+static void sleeper(void *arg) {
+    uint64_t t0 = pit_get_ticks();
+
+    (void)arg;
+    thread_sleep_ticks(10);
+    slept_ticks = pit_get_ticks() - t0;
+}
+
+static void spinner(void *arg) {
+    int which = (int)(intptr_t)arg;
+
+    while (!stop_flag) {
+        spin_count[which]++;
+    }
+}
+
+static void test_threads_cooperative(void) {
+    struct heap_stats before, after;
+    struct thread *t[3];
+    int was = sched_preemption_enabled();
+
+    heap_get_stats(&before);
+    sched_set_preemption(0);
+    order_n = 0;
+
+    for (int i = 0; i < 3; i++) {
+        t[i] = thread_create("order", order_thread, (void *)(intptr_t)(i + 1));
+        CHECK(t[i] != 0);
+    }
+    for (int i = 0; i < 3; i++) {
+        CHECK(t[i] && thread_join(t[i]) == 0);
+    }
+    sched_set_preemption(was);
+
+    /* Round robin must give 1 2 3 1 2 3 1 2 3. */
+    int ok = (order_n == 9);
+    for (int k = 0; k < 9 && ok; k++) {
+        ok = (order_log[k] == (k % 3) + 1);
+    }
+    CHECK(ok);
+
+    CHECK(thread_join(t[0]) == -1);                 /* already joined */
+    CHECK(thread_join(thread_current()) == -1);     /* cannot join self */
+    CHECK(sched_thread_at(1) == 0);                 /* slots released */
+
+    heap_get_stats(&after);
+    CHECK(stats_equal(&before, &after));            /* stacks were freed */
+    CHECK(heap_check() == 0);
+}
+
+static void test_threads_sleep(void) {
+    struct thread *t = thread_create("sleeper", sleeper, 0);
+
+    slept_ticks = 0;
+    CHECK(t != 0);
+    CHECK(t && thread_join(t) == 0);
+    CHECK(slept_ticks >= 10);
+    CHECK(slept_ticks < 40);
+}
+
+static void test_threads_preemption(void) {
+    uint64_t switches0 = sched_switch_count();
+    int was = sched_preemption_enabled();
+
+    stop_flag = 0;
+    spin_count[0] = spin_count[1] = 0;
+    sched_set_preemption(1);
+
+    struct thread *a = thread_create("spin-a", spinner, (void *)0);
+    struct thread *b = thread_create("spin-b", spinner, (void *)1);
+
+    CHECK(a && b);
+    thread_sleep_ticks(40);              /* main waits; the timer must rotate them */
+    stop_flag = 1;
+    if (a) thread_join(a);
+    if (b) thread_join(b);
+    sched_set_preemption(was);
+
+    /* Neither spinner ever yields: only the timer interrupt can have
+     * switched between them, so both running proves preemption works. */
+    CHECK(spin_count[0] > 0);
+    CHECK(spin_count[1] > 0);
+    CHECK(sched_switch_count() - switches0 >= 4);
+}
+
+static void test_race_conditions(void) {
+    uint64_t expected = SYNC_ITERS * SYNC_THREADS;
+
+    CHECK(sync_demo_race(SYNC_UNSAFE) < expected);   /* updates were lost */
+    CHECK(sync_demo_race(SYNC_MUTEX) == expected);   /* mutex fixes it */
+    CHECK(sync_demo_race(SYNC_ATOMIC) == expected);  /* so does an atomic add */
+}
+
 /* ---- keyboard ring, RTC, glossary, lessons ------------------------------ */
 
 static void test_keyboard_ring(void) {
@@ -459,7 +570,7 @@ static void test_glossary(void) {
 #ifdef KC_SELFTEST
 /* Run every lesson headless: any crash, fault or hang fails the build. */
 static void test_lessons_run(void) {
-    CHECK(learn_lesson_count() >= 10);
+    CHECK(learn_lesson_count() >= 12);
     learn_run_all_auto();
 }
 #endif
@@ -481,6 +592,10 @@ static const struct test_case tests[] = {
     { "heap: calloc",         test_heap_calloc },
     { "heap: fragmentation",  test_heap_fragmentation },
     { "heap: exhaustion",     test_heap_exhaustion },
+    { "threads: round robin", test_threads_cooperative },
+    { "threads: sleep",       test_threads_sleep },
+    { "threads: preemption",  test_threads_preemption },
+    { "threads: races",       test_race_conditions },
     { "keyboard ring",        test_keyboard_ring },
     { "rtc",                  test_rtc },
     { "glossary",             test_glossary },

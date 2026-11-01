@@ -12,10 +12,10 @@
  * Every allocation is preceded by a 32-byte header and rounded up to a
  * multiple of 16 bytes, so returned pointers are 16-byte aligned.
  *
- * There is no locking. That is fine today (one CPU, and the shell, which runs
- * inside the keyboard IRQ handler, is the only caller), but an interrupt
- * handler must never allocate while the code it interrupted is inside the
- * allocator.
+ * Thread safety: kmalloc, kfree and the stats/check helpers run with
+ * interrupts disabled, which is a complete lock on one CPU because the timer
+ * interrupt is what drives preemption. heap_walk() is not locked since it
+ * calls back into arbitrary code.
  */
 
 #define HEAP_FRAMES 256                       /* 1 MiB */

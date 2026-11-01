@@ -32,6 +32,10 @@ static const struct lesson lessons[] = {
       "walk the real page tables like the MMU does", lesson_paging },
     { "heap",     "Dynamic memory: the kernel heap",
       "watch kmalloc split and kfree coalesce, drawn live", lesson_heap },
+    { "sched",    "Threads and the scheduler",
+      "context switches and preemption, with live threads", lesson_sched },
+    { "sync",     "Races and locks",
+      "lose updates on purpose, then fix them with a mutex", lesson_sync },
 };
 
 #define LESSON_COUNT ((int)(sizeof(lessons) / sizeof(lessons[0])))

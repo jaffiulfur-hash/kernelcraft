@@ -12,6 +12,7 @@
 #include "lib/kprintf.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
+#include "sched/thread.h"
 #include "selftest.h"
 #include "shell.h"
 
@@ -55,6 +56,7 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
     pmm_print_summary();
 
     heap_init();
+    sched_init();
 
     selftest_init(mb_info_addr);
 
