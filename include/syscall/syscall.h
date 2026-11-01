@@ -3,29 +3,21 @@
 
 #include <stdint.h>
 #include "arch/isr.h"
+#include "syscall/numbers.h"
 
 /*
- * System calls: the controlled doorway into the kernel.
+ * System calls: the controlled doorway into the kernel. Numbers are in
+ * syscall/numbers.h so user programs can share them.
  *
  * ABI (as on 32-bit Linux's int 0x80, widened to 64 bits):
  *     rax = call number, rdi/rsi/rdx = arguments, result comes back in rax.
  * Unknown numbers and bad arguments return -1.
  *
- * NOTE: KernelCraft has no user mode yet, so callers are kernel code in
- * ring 0 and the gate has DPL 0. This is the dispatch half of a system
- * call; the privilege-change half (GDT user segments, TSS, US page bits,
- * a DPL 3 gate) is the next stage.
+ * Callers may be kernel threads (ring 0) or user processes (ring 3). The gate
+ * has DPL 3, so `int 0x80` is legal from user mode; every other vector is
+ * closed to it. Pointers from ring 3 are checked against the caller's own
+ * address space before the kernel touches them.
  */
-
-#define SYSCALL_VECTOR 0x80
-
-#define SYS_WRITE      0   /* (const char *buf, size_t len)  -> bytes written */
-#define SYS_GETPID     1   /* ()                              -> thread id */
-#define SYS_YIELD      2   /* ()                              -> 0 */
-#define SYS_UPTIME_MS  3   /* ()                              -> milliseconds since boot */
-#define SYS_SLEEP_MS   4   /* (uint64_t ms)                   -> 0 */
-#define SYS_EXIT       5   /* ()                              -> does not return */
-#define SYSCALL_COUNT  6
 
 void syscall_init(void);                       /* installs the IDT gate */
 void syscall_dispatch(interrupt_frame_t *frame);

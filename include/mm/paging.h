@@ -36,6 +36,9 @@ struct paging_walk {
 /* Returns 0 if `virt` is mapped, -1 otherwise. `*w` is filled either way. */
 int paging_walk(uint64_t virt, struct paging_walk *w);
 
+/* Same, but through an arbitrary top-level table instead of the current CR3. */
+int paging_walk_cr3(uint64_t cr3, uint64_t virt, struct paging_walk *w);
+
 /* Print the level-by-level translation (used by `vtop` and the lesson). */
 void paging_print_walk(const struct paging_walk *w);
 

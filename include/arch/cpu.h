@@ -11,6 +11,8 @@
 
 #define MSR_EFER 0xC0000080u
 
+#define EFER_NXE (1ull << 11)    /* honour the no-execute bit in page tables */
+
 #define RFLAGS_IF 0x200u   /* interrupt enable flag */
 
 /* The operand of sgdt/sidt: a 16-bit limit followed by a 64-bit base. */
@@ -41,6 +43,15 @@ static inline uint64_t read_cr4(void) {
     uint64_t v;
     __asm__ volatile ("mov %%cr4, %0" : "=r"(v));
     return v;
+}
+
+static inline void write_cr3(uint64_t value) {
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(value) : "memory");
+}
+
+static inline void wrmsr(uint32_t msr, uint64_t value) {
+    __asm__ volatile ("wrmsr" : : "c"(msr), "a"((uint32_t)value),
+                      "d"((uint32_t)(value >> 32)));
 }
 
 static inline uint64_t rdmsr(uint32_t msr) {

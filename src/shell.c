@@ -6,6 +6,7 @@
 #include "selftest.h"
 #include "vga.h"
 #include "arch/debug.h"
+#include "arch/interrupts.h"
 #include "arch/keyboard.h"
 #include "arch/log.h"
 #include "arch/pit.h"
@@ -18,6 +19,7 @@
 #include "mm/heap.h"
 #include "sched/thread.h"
 #include "mm/paging.h"
+#include "proc/process.h"
 #include "mm/pmm.h"
 
 #define SHELL_BUFFER_SIZE 128
@@ -137,18 +139,110 @@ static void cmd_ps(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    kprintf("  id name             state     cpu ticks  switches\n");
+    kprintf("  id name             mode   state     cpu ticks  switches\n");
     for (int i = 0; i < MAX_THREADS; i++) {
         const struct thread *t = sched_thread_at(i);
 
         if (t) {
-            kprintf("  %2d %-16s %-9s %9lu  %8lu\n", t->id, t->name,
-                    thread_state_name(t->state), t->cpu_ticks, t->switches);
+            kprintf("  %2d %-16s %-6s %-9s %9lu  %8lu\n", t->id, t->name,
+                    t->is_user ? "user" : "kernel", thread_state_name(t->state),
+                    t->cpu_ticks, t->switches);
         }
     }
     kprintf("context switches so far: %lu   preemption: %s   quantum: %d ticks\n",
             sched_switch_count(), sched_preemption_enabled() ? "on" : "off",
             THREAD_QUANTUM_TICKS);
+}
+
+static void print_result(const struct process_result *r) {
+    switch (r->term) {
+        case TERM_EXITED:
+            kprintf("pid %d (%s) exited with code %d\n", r->pid, r->name, r->exit_code);
+            break;
+        case TERM_FAULT:
+            kprintf("pid %d (%s) was killed by the kernel: %s at rip=0x%lx\n", r->pid,
+                    r->name, interrupt_vector_name((uint8_t)r->fault_vector), r->fault_rip);
+            break;
+        case TERM_KILLED:
+            kprintf("pid %d (%s) was killed\n", r->pid, r->name);
+            break;
+        default:
+            kprintf("pid %d (%s) ended\n", r->pid, r->name);
+            break;
+    }
+}
+
+static void cmd_progs(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    kprintf("%lu user programs built into the kernel (source: user/prog_<name>.c):\n",
+            user_program_count);
+    for (uint64_t i = 0; i < user_program_count; i++) {
+        kprintf("  %-16s %6lu bytes (ELF)\n", user_programs[i].name,
+                (uint64_t)(user_programs[i].end - user_programs[i].start));
+    }
+}
+
+static void cmd_run(int argc, char **argv) {
+    struct thread *started[SHELL_MAX_ARGS];
+    int n = 0;
+
+    if (argc < 2) {
+        print_usage("run <program> [program...]   (see 'progs')");
+        return;
+    }
+
+    /* Start everything first so several programs really run at the same time. */
+    for (int i = 1; i < argc; i++) {
+        const char *why = 0;
+        struct thread *t = process_spawn(argv[i], 0, &why);
+
+        if (!t) {
+            kprintf("cannot start '%s': %s\n", argv[i], why ? why : "unknown error");
+            continue;
+        }
+        started[n++] = t;
+    }
+
+    for (int i = 0; i < n; i++) {
+        struct process_result r;
+
+        process_wait(started[i], &r);
+        print_result(&r);
+    }
+}
+
+static void cmd_spawn(int argc, char **argv) {
+    const char *why = 0;
+
+    if (argc != 2) {
+        print_usage("spawn <program>   (runs in the background; see 'ps', 'kill')");
+        return;
+    }
+
+    struct thread *t = process_spawn(argv[1], 1, &why);
+
+    if (!t) {
+        kprintf("cannot start '%s': %s\n", argv[1], why ? why : "unknown error");
+        return;
+    }
+    kprintf_atomic("started pid %d (%s) in the background\n", t->id, t->name);
+}
+
+static void cmd_kill(int argc, char **argv) {
+    uint64_t pid;
+
+    if (argc != 2) {
+        print_usage("kill <pid>");
+        return;
+    }
+    if (parse_arg(argv[1], "pid", &pid) != 0) {
+        return;
+    }
+
+    kprintf(process_kill((int)pid) == 0 ? "kill requested for pid %lu\n"
+                                        : "no such user process: %lu\n", pid);
 }
 
 static void cmd_vtop(int argc, char **argv) {
@@ -458,6 +552,10 @@ static const struct shell_command commands[] = {
     { "date",     "date",                "wall-clock time from the RTC",     cmd_date },
     { "sleep",    "sleep <ms>",          "wait, with the CPU halted",        cmd_sleep },
     { "vtop",     "vtop <addr>",         "walk the page tables for an address", cmd_vtop },
+    { "progs",    "progs",               "list built-in user programs",      cmd_progs },
+    { "run",      "run <prog>...",       "run user programs in ring 3, wait", cmd_run },
+    { "spawn",    "spawn <prog>",        "start a user program in the background", cmd_spawn },
+    { "kill",     "kill <pid>",          "terminate a user process",         cmd_kill },
     { "ps",       "ps",                  "list threads and scheduler stats", cmd_ps },
     { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
     { "tour",     "tour",                "all lessons in order",             cmd_tour },
@@ -557,6 +655,8 @@ static void shell_execute(char *line) {
     if (argc == 0) {
         return;
     }
+
+    sched_reap_detached();       /* free background processes that finished */
 
     for (size_t i = 0; i < COMMAND_COUNT; i++) {
         if (strcmp(argv[0], commands[i].name) == 0) {

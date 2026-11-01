@@ -1,8 +1,10 @@
 #include "sched/thread.h"
 #include "arch/cpu.h"
+#include "arch/gdt.h"
 #include "arch/pit.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
+#include "mm/aspace.h"
 #include "mm/heap.h"
 #include "panic.h"
 
@@ -76,6 +78,20 @@ static void schedule(void) {
         check_canary(prev);
         check_canary(next);
 
+        /*
+         * Switch address spaces. The kernel's own gigabyte is mapped
+         * identically in every space, so the code we are running and this
+         * stack stay valid across the write.
+         */
+        if (read_cr3() != next->cr3) {
+            write_cr3(next->cr3);
+        }
+
+        /* A trap from ring 3 must land on the stack of whoever runs next. */
+        if (next->is_user) {
+            gdt_set_kernel_stack((uint64_t)(uintptr_t)next->stack + THREAD_STACK_SIZE);
+        }
+
         context_switch(&prev->rsp, next->rsp);
         /* ...we are back: someone switched to `prev` again. */
     }
@@ -104,12 +120,16 @@ void sched_init(void) {
     threads[0].id = 0;
     threads[0].state = THREAD_RUNNING;
     memcpy(threads[0].name, "main", 5);
+    threads[0].cr3 = aspace_kernel_cr3();
     current = &threads[0];
     next_id = 1;
     preemption = 1;
 }
 
-struct thread *thread_create(const char *name, void (*entry)(void *), void *arg) {
+static struct thread *create_common(const char *name, void (*entry)(void *), void *arg,
+                                    struct aspace *as, int detached) {
+    sched_reap_detached();
+
     uint8_t *stack = (uint8_t *)kmalloc(THREAD_STACK_SIZE);
 
     if (!stack) {
@@ -137,6 +157,10 @@ struct thread *thread_create(const char *name, void (*entry)(void *), void *arg)
     t->stack = stack;
     t->entry = entry;
     t->arg = arg;
+    t->as = as;
+    t->is_user = as != 0;
+    t->detached = (uint8_t)detached;
+    t->cr3 = as ? as->cr3 : aspace_kernel_cr3();
     for (int i = 0; i < THREAD_NAME_LEN - 1 && name[i]; i++) {
         t->name[i] = name[i];
     }
@@ -169,8 +193,27 @@ struct thread *thread_create(const char *name, void (*entry)(void *), void *arg)
     return t;
 }
 
+struct thread *thread_create(const char *name, void (*entry)(void *), void *arg) {
+    return create_common(name, entry, arg, 0, 0);
+}
+
+struct thread *thread_create_user(const char *name, void (*entry)(void *), void *arg,
+                                  struct aspace *as, int detached) {
+    return create_common(name, entry, arg, as, detached);
+}
+
 struct thread *thread_current(void) {
     return current;
+}
+
+struct thread *thread_find(int id) {
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state != THREAD_UNUSED && threads[i].id == id) {
+            return &threads[i];
+        }
+    }
+
+    return 0;
 }
 
 void thread_yield(void) {
@@ -228,6 +271,21 @@ void thread_exit(void) {
     }
 }
 
+/* Release everything a finished thread still owns. It must not be running. */
+static void free_thread(struct thread *t) {
+    uint64_t flags = irq_save();
+    uint8_t *stack = t->stack;
+    struct aspace *as = t->as;
+
+    t->state = THREAD_UNUSED;
+    t->stack = 0;
+    t->as = 0;
+    irq_restore(flags);
+
+    kfree(stack);
+    aspace_destroy(as);          /* no-op for kernel threads */
+}
+
 int thread_join(struct thread *t) {
     if (!t || t == current || t == &threads[0] || t->state == THREAD_UNUSED) {
         return -1;
@@ -239,15 +297,16 @@ int thread_join(struct thread *t) {
         thread_idle();
     }
 
-    uint64_t flags = irq_save();
-    uint8_t *stack = t->stack;
-
-    t->state = THREAD_UNUSED;
-    t->stack = 0;
-    irq_restore(flags);
-
-    kfree(stack);
+    free_thread(t);
     return 0;
+}
+
+void sched_reap_detached(void) {
+    for (int i = 1; i < MAX_THREADS; i++) {
+        if (threads[i].state == THREAD_ZOMBIE && threads[i].detached) {
+            free_thread(&threads[i]);
+        }
+    }
 }
 
 /* ---- timer-driven part ------------------------------------------------ */

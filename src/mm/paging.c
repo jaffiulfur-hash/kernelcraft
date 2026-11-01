@@ -30,9 +30,13 @@ void paging_format_flags(uint64_t e, char *buf, unsigned size) {
 }
 
 int paging_walk(uint64_t virt, struct paging_walk *w) {
+    return paging_walk_cr3(read_cr3(), virt, w);
+}
+
+int paging_walk_cr3(uint64_t cr3, uint64_t virt, struct paging_walk *w) {
     memset(w, 0, sizeof(*w));
     w->virt = virt;
-    w->cr3 = read_cr3();
+    w->cr3 = cr3;
     w->fail_level = -1;
 
     /* Bits 63:48 must be copies of bit 47 ("canonical" addresses). */

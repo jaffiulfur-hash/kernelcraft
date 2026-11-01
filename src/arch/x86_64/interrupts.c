@@ -8,6 +8,7 @@
 #include "arch/pic.h"
 #include "arch/pit.h"
 #include "sched/thread.h"
+#include "proc/process.h"
 #include "syscall/syscall.h"
 #include "lib/kprintf.h"
 #include "vga.h"
@@ -97,11 +98,20 @@ static void print_exception_name(uint64_t vector) {
     }
 }
 
-void interrupt_dispatch(interrupt_frame_t *frame) {
+static void dispatch_inner(interrupt_frame_t *frame) {
     vector_counts[frame->vector & 0xFF]++;
 
     if (frame->vector < 32) {
         debug_save_last_frame(frame);
+
+        /*
+         * An exception raised by user code is the PROGRAM's fault, not the
+         * kernel's: terminate that process and carry on. (CS low bits = the
+         * privilege level the CPU was in when it happened.)
+         */
+        if ((frame->cs & 3) == 3) {
+            process_fault(frame);
+        }
 
         if (frame->vector == 3) {
             vga_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
@@ -163,6 +173,15 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
     log_write("\n");
     debug_print_frame(frame);
     halt_forever();
+}
+
+void interrupt_dispatch(interrupt_frame_t *frame) {
+    dispatch_inner(frame);
+
+    /* About to return to user mode: honour a pending `kill`. */
+    if ((frame->cs & 3) == 3) {
+        process_check_kill();
+    }
 }
 
 void interrupts_init(void) {

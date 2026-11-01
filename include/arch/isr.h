@@ -23,9 +23,13 @@ typedef struct interrupt_frame {
     uint64_t vector;
     uint64_t error_code;
 
+    /* Pushed by the CPU. In 64-bit mode rsp and ss are pushed on EVERY
+     * interrupt, not only when the privilege level changes. */
     uint64_t rip;
     uint64_t cs;
     uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
 } interrupt_frame_t;
 
 void interrupt_dispatch(interrupt_frame_t *frame);

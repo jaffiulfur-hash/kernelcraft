@@ -29,6 +29,19 @@ SRC_ASM := $(shell find src -name '*.asm' | sort)
 OBJS    := $(SRC_C:src/%.c=$(BUILD_DIR)/%.o) $(SRC_ASM:src/%.asm=$(BUILD_DIR)/%.o)
 DEPS    := $(OBJS:.o=.d)
 
+# ---- user programs ---------------------------------------------------------
+# Every user/prog_<name>.c becomes a real ELF executable (linked at USER_BASE
+# by user/user.ld) that is embedded in the kernel image and loaded at run time
+# by `run <name>`. No per-program rules: just add a file.
+USER_CFLAGS = -m64 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone \
+              -mgeneral-regs-only -Wall -Wextra -std=c11 -O1 -Iuser -Iinclude -MMD -MP
+USER_PROGS  := $(patsubst user/prog_%.c,%,$(sort $(wildcard user/prog_*.c)))
+USER_ELFS   := $(USER_PROGS:%=$(BUILD_DIR)/user/%.elf)
+USER_COMMON := $(BUILD_DIR)/user/crt0.o $(BUILD_DIR)/user/ulib.o
+USER_BLOB   := $(BUILD_DIR)/user/blob.o
+OBJS        += $(USER_BLOB)
+DEPS        += $(wildcard $(BUILD_DIR)/user/*.d)
+
 ISO_DIR   = $(BUILD_DIR)/iso
 KERNEL    = $(BUILD_DIR)/kernel.elf
 ISO_IMAGE = $(BUILD_DIR)/kernelcraft.iso
@@ -41,6 +54,25 @@ $(BUILD_DIR)/%.o: src/%.c
 
 $(BUILD_DIR)/%.o: src/%.asm
 	@mkdir -p $(@D)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/user/%.o: user/%.c
+	@mkdir -p $(@D)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/user/crt0.o: user/crt0.asm
+	@mkdir -p $(@D)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/user/%.elf: $(USER_COMMON) $(BUILD_DIR)/user/prog_%.o user/user.ld
+	$(LD) -nostdlib -z max-page-size=0x1000 -z noexecstack -T user/user.ld -o $@ \
+		$(USER_COMMON) $(BUILD_DIR)/user/prog_$*.o
+
+$(BUILD_DIR)/user/blob.asm: $(USER_ELFS) tools/mkblob.sh
+	@mkdir -p $(@D)
+	sh tools/mkblob.sh $@ $(USER_ELFS)
+
+$(BUILD_DIR)/user/blob.o: $(BUILD_DIR)/user/blob.asm
 	$(NASM) -f elf64 $< -o $@
 
 $(KERNEL): $(OBJS) linker.ld

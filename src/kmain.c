@@ -10,6 +10,7 @@
 #include "boot/bootinfo.h"
 #include "boot/multiboot2.h"
 #include "lib/kprintf.h"
+#include "mm/aspace.h"
 #include "mm/heap.h"
 #include "mm/pmm.h"
 #include "sched/thread.h"
@@ -57,6 +58,7 @@ void kmain(uint32_t mb_magic, uint32_t mb_info_addr) {
     pmm_print_summary();
 
     heap_init();
+    aspace_init();
     sched_init();
     syscall_init();
 
