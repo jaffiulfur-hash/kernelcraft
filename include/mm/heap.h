@@ -20,6 +20,7 @@
 
 #define HEAP_FRAMES 256                       /* 1 MiB */
 #define HEAP_ALIGN  16
+#define HEAP_HEADER_SIZE 32                   /* bytes before every payload */
 
 struct heap_stats {
     size_t total_bytes;      /* size of the whole region, headers included */
@@ -49,5 +50,12 @@ int heap_is_live_ptr(const void *ptr);
 int heap_check(void);
 
 void heap_dump(void);
+
+/*
+ * Visit every block in address order: fn(payload, size, used, ctx). Return
+ * nonzero from fn to stop early. Used by the heap lesson to draw the heap.
+ */
+typedef int (*heap_walk_fn)(void *payload, size_t size, int used, void *ctx);
+void heap_walk(heap_walk_fn fn, void *ctx);
 
 #endif

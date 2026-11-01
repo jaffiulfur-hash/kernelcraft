@@ -27,6 +27,9 @@ _Static_assert(sizeof(struct heap_block) % HEAP_ALIGN == 0,
 
 #define HEADER_SIZE (sizeof(struct heap_block))
 
+_Static_assert(sizeof(struct heap_block) == HEAP_HEADER_SIZE,
+               "update HEAP_HEADER_SIZE in heap.h");
+
 static uint8_t *heap_start;
 static uint8_t *heap_end;
 static struct heap_block *first_block;
@@ -245,5 +248,13 @@ void heap_dump(void) {
     for (struct heap_block *b = first_block; b; b = b->next) {
         kprintf("  %p  %8lu  %s\n", block_payload(b), (uint64_t)b->size,
                 b->magic == MAGIC_USED ? "used" : "free");
+    }
+}
+
+void heap_walk(heap_walk_fn fn, void *ctx) {
+    for (struct heap_block *b = first_block; b; b = b->next) {
+        if (fn(block_payload(b), b->size, b->magic == MAGIC_USED, ctx)) {
+            return;
+        }
     }
 }

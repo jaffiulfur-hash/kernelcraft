@@ -14,6 +14,7 @@
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
+#include "mm/paging.h"
 #include "mm/pmm.h"
 
 #define SHELL_BUFFER_SIZE 128
@@ -131,6 +132,22 @@ static void cmd_sleep(int argc, char **argv) {
     while (pit_get_ticks() < until) {
         __asm__ volatile ("hlt");
     }
+}
+
+static void cmd_vtop(int argc, char **argv) {
+    uint64_t addr;
+    struct paging_walk w;
+
+    if (argc != 2) {
+        print_usage("vtop <virtual address>");
+        return;
+    }
+    if (parse_arg(argv[1], "address", &addr) != 0) {
+        return;
+    }
+
+    paging_walk(addr, &w);
+    paging_print_walk(&w);
 }
 
 static void cmd_learn(int argc, char **argv) {
@@ -407,6 +424,7 @@ static const struct shell_command commands[] = {
     { "echo",     "echo [text...]",      "print arguments",                  cmd_echo },
     { "date",     "date",                "wall-clock time from the RTC",     cmd_date },
     { "sleep",    "sleep <ms>",          "wait, with the CPU halted",        cmd_sleep },
+    { "vtop",     "vtop <addr>",         "walk the page tables for an address", cmd_vtop },
     { "learn",    "learn [lesson]",      "interactive OS lessons",           cmd_learn },
     { "glossary", "glossary [term]",     "look up an OS term",               cmd_glossary },
     { "ticks",    "ticks",               "timer ticks since boot",           cmd_ticks },

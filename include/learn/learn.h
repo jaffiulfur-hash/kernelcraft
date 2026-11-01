@@ -63,6 +63,9 @@ void lesson_gdt(void);
 void lesson_idt(void);
 void lesson_irq(void);
 void lesson_keyboard(void);
+void lesson_pmm(void);
+void lesson_paging(void);
+void lesson_heap(void);
 
 /* ---- glossary --------------------------------------------------------- */
 void glossary_command(int argc, char **argv);

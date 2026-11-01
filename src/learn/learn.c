@@ -26,6 +26,12 @@ static const struct lesson lessons[] = {
       "IRQs, EOI, the PIT, and measuring a tick", lesson_irq },
     { "keyboard", "From keypress to character",
       "watch raw scancodes arrive", lesson_keyboard },
+    { "pmm",      "Physical memory",
+      "a live map of RAM; first-fit allocation and fragmentation", lesson_pmm },
+    { "paging",   "Virtual memory and page tables",
+      "walk the real page tables like the MMU does", lesson_paging },
+    { "heap",     "Dynamic memory: the kernel heap",
+      "watch kmalloc split and kfree coalesce, drawn live", lesson_heap },
 };
 
 #define LESSON_COUNT ((int)(sizeof(lessons) / sizeof(lessons[0])))
@@ -67,19 +73,20 @@ void learn_live(const char *what) {
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 }
 
-void learn_try(const char *text) {
-    vga_set_color(VGA_COLOR_LIGHT_BROWN, VGA_COLOR_BLACK);
-    kprintf("TRY: %s\n", text);
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-}
-
-void learn_para(const char *text) {
-    int col = 0;
+/*
+ * Word-wrap `text` to TEXT_WIDTH columns. The first line starts at column
+ * `first_col` (the caller already printed a prefix); continuation lines are
+ * indented by `indent` spaces. '\n' in the text forces a line break.
+ */
+static void wrap_text(const char *text, int first_col, int indent) {
+    int col = first_col;
 
     while (*text) {
         if (*text == '\n') {
             log_write_char('\n');
-            col = 0;
+            for (col = 0; col < indent; col++) {
+                log_write_char(' ');
+            }
             text++;
             continue;
         }
@@ -94,11 +101,13 @@ void learn_para(const char *text) {
             len++;
         }
 
-        if (col > 0 && col + 1 + len > TEXT_WIDTH) {
+        if (col > indent && col + 1 + len > TEXT_WIDTH) {
             log_write_char('\n');
-            col = 0;
+            for (col = 0; col < indent; col++) {
+                log_write_char(' ');
+            }
         }
-        if (col > 0) {
+        if (col > indent) {
             log_write_char(' ');
             col++;
         }
@@ -109,7 +118,18 @@ void learn_para(const char *text) {
         col += len;
         text += len;
     }
+}
 
+void learn_try(const char *text) {
+    vga_set_color(VGA_COLOR_LIGHT_BROWN, VGA_COLOR_BLACK);
+    kprintf("TRY: ");
+    wrap_text(text, 5, 5);
+    kprintf("\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+}
+
+void learn_para(const char *text) {
+    wrap_text(text, 0, 0);
     kprintf("\n\n");
 }
 
