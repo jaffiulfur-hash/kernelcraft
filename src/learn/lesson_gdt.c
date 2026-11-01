@@ -16,7 +16,7 @@ static void decode_entry(int index, uint64_t raw) {
     const char *rw;
 
     if (!(access & 0x10)) {
-        kind = "system";
+        kind = ((access & 0xF) == 0x9 || (access & 0xF) == 0xB) ? "TSS" : "system";
         rw = "";
     } else if (access & 0x08) {
         kind = "code";
@@ -66,35 +66,38 @@ void lesson_gdt(void) {
     int count = (gdtr.limit + 1) / 8;
 
     for (int i = 0; i < count && i < 8; i++) {
-        decode_entry(i, table[i]);
+        if (i == 6) {
+            kprintf("  6   --    0x%016lx  upper half of the 16-byte TSS descriptor\n", table[i]);
+        } else {
+            decode_entry(i, table[i]);
+        }
     }
 
     kprintf("\n");
-    learn_para("Entry 1 is the kernel code segment: executable, ring 0, L=1 so "
-               "the CPU runs it as 64-bit code. Entry 2 is kernel data. Base "
-               "and limit are all zero because they no longer matter. These "
-               "come from gdt_init() in src/arch/x86_64/gdt.c; boot.asm had "
-               "its own temporary GDT, which this one replaced.");
-    learn_para("Spot the detail: entry 2's access byte reads 0x93 although "
-               "gdt.c wrote 0x92. The CPU set the 'accessed' bit itself when "
-               "the descriptor was loaded into DS and SS.");
+    learn_para("Entry 1 is kernel code: executable, ring 0, L=1 so the CPU runs "
+               "it as 64-bit. Entry 2 is kernel data. Entries 3 and 4 are the "
+               "same for ring 3 (DPL=3), and 5-6 hold the TSS. Base and limit "
+               "are zero for segments: they no longer matter. All built by "
+               "gdt_init() in gdt.c.");
     LEARN_NEXT();
 
     learn_page("Segmentation and the GDT");
-    learn_heading("What a complete GDT adds");
+    learn_heading("Rings, selectors and the TSS");
     kprintf("  idx  selector  purpose\n");
     kprintf("   0   0x00      null (required, never usable)\n");
-    kprintf("   1   0x08      kernel code, ring 0                  <- we have\n");
-    kprintf("   2   0x10      kernel data, ring 0                  <- we have\n");
-    kprintf("   3   0x18|3    user data, ring 3                    (next stage)\n");
-    kprintf("   4   0x20|3    user code, ring 3                    (next stage)\n");
-    kprintf("  5-6  0x28      TSS (16-byte system descriptor)      (next stage)\n\n");
+    kprintf("   1   0x08      kernel code, ring 0\n");
+    kprintf("   2   0x10      kernel data, ring 0\n");
+    kprintf("   3   0x1B      user data, ring 3          (0x18 | RPL 3)\n");
+    kprintf("   4   0x23      user code, ring 3          (0x20 | RPL 3)\n");
+    kprintf("  5-6  0x28      TSS, a 16-byte system descriptor\n\n");
     learn_para("The user entries let programs run in ring 3. The TSS (task state "
-               "segment) tells the CPU which stack to switch to when a ring 3 "
-               "program traps into the kernel; without it a system call from "
-               "user mode would run on the user's own stack. That is why user "
-               "mode needs more than a bit flip: it is a GDT, a TSS, page "
-               "permissions and a syscall path all agreeing.");
-    learn_try("in gdt.c, change the data segment's access byte from 0x92 to "
-              "0x90 (read-only) and see what breaks first.");
+               "segment) holds rsp0, the stack the CPU switches to when a ring "
+               "3 program traps into the kernel; without it a system call "
+               "would run on the user's own stack, which the program controls. "
+               "The 'usermode' lesson runs a real program through these.");
+    learn_para("Spot the detail: entry 2's access byte reads 0x93 although "
+               "gdt.c wrote 0x92. The CPU set the 'accessed' bit itself when "
+               "the descriptor was loaded into DS and SS.");
+    learn_try("in gdt.c change the user code access byte 0xFA to 0x9A (DPL 0), "
+              "then 'run hello' and see what the CPU does.");
 }

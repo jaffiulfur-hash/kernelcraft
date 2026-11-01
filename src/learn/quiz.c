@@ -80,6 +80,15 @@ static const struct question questions[] = {
       { "sti is slow without it", "An interrupt with no valid gate cannot even be reported: the CPU escalates to a double and then triple fault",
         "The PIC needs it", "The keyboard needs it" }, 1,
       "With no handler the CPU cannot deliver the resulting fault either, so it resets the machine. kmain loads the GDT and IDT before it runs sti." },
+    { "What does the U/S bit in a page-table entry control?",
+      { "Whether the page is swapped", "Whether code in ring 3 may access the page", "Whether the page is shared", "The page size" }, 1,
+      "A page is reachable from ring 3 only if the U/S bit is set at every level of the walk. Kernel pages lack it." },
+    { "Why does the CPU need the TSS when a ring 3 program makes a system call?",
+      { "To count system calls", "To find the kernel stack (rsp0) to switch to", "To flush the TLB", "To load the program" }, 1,
+      "The user stack is under the program's control, so the CPU must switch to a stack the kernel chose before running kernel code." },
+    { "How does the kernel start a program in ring 3 for the first time?",
+      { "With a jmp", "By building an interrupt-return frame by hand and executing iretq", "With the hlt instruction", "By rebooting" }, 1,
+      "No instruction lowers privilege directly; iretq with a CS of ring 3 is how the CPU drops to it." },
 };
 
 #define QUESTION_COUNT ((int)(sizeof(questions) / sizeof(questions[0])))

@@ -768,7 +768,7 @@ static void test_glossary(void) {
 #ifdef KC_SELFTEST
 /* Run every lesson headless: any crash, fault or hang fails the build. */
 static void test_lessons_run(void) {
-    CHECK(learn_lesson_count() >= 14);
+    CHECK(learn_lesson_count() >= 17);
     learn_run_all_auto();
 }
 #endif

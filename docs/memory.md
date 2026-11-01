@@ -100,6 +100,16 @@ Known limits, all deliberate for now:
   while they run, which is a complete lock on one CPU (nothing can preempt
   them). It would not be enough with several CPUs.
 
+## Address spaces (`aspace.c`)
+
+User processes each get a private PML4. Entry 0 of the new PDPT is copied from
+the boot tables, so the kernel's gigabyte is shared by every process but keeps
+its supervisor-only entries; entry 1 points at a private page directory and
+page table for the 2 MiB user window at `0x40000000`. ELF segments are mapped
+into it page by page with their own permissions (code r-x, data rw- and NX).
+`aspace_destroy` returns every frame, and the tests assert that nothing leaks.
+See `learn aspace` for the live view.
+
 ## Self-tests
 
 `src/selftest.c` checks the string helpers, `kprintf`, the PMM (including bad

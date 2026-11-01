@@ -140,10 +140,11 @@ void process_fault(const interrupt_frame_t *frame) {
     t->fault_addr = frame->vector == 14 ? read_cr2() : 0;
     t->exit_code = -(int)frame->vector;
 
-    kprintf("[kernel] process %d (%s) killed: %s at rip=0x%lx", t->id, t->name,
-            interrupt_vector_name((uint8_t)frame->vector), frame->rip);
+    kprintf("[kernel] process %d (%s) killed: %s\n", t->id, t->name,
+            interrupt_vector_name((uint8_t)frame->vector));
+    kprintf("         rip=0x%lx", frame->rip);
     if (frame->vector == 14) {
-        kprintf(", address 0x%lx (%s, %s)", t->fault_addr,
+        kprintf("  address=0x%lx  (%s, %s)", t->fault_addr,
                 (frame->error_code & 1) ? "protection violation" : "page not present",
                 (frame->error_code & 2) ? "write" : "read");
     }

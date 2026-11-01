@@ -70,6 +70,9 @@ void lesson_sched(void);
 void lesson_sync(void);
 void lesson_syscall(void);
 void lesson_pci(void);
+void lesson_usermode(void);
+void lesson_aspace(void);
+void lesson_elf(void);
 
 /* The race demo behind the sync lesson; also used by the self-tests. */
 #define SYNC_UNSAFE  0

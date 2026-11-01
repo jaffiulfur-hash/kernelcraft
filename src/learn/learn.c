@@ -40,6 +40,12 @@ static const struct lesson lessons[] = {
       "int 0x80, the call table and why arguments are distrusted", lesson_syscall },
     { "pci",      "Finding hardware: PCI",
       "enumerate the real devices and read a config header", lesson_pci },
+    { "usermode", "User mode: running untrusted code",
+      "ring 3, the TSS, and what happens when programs misbehave", lesson_usermode },
+    { "aspace",   "Address spaces and isolation",
+      "two processes, one virtual address, different memory", lesson_aspace },
+    { "elf",      "Executables: the ELF format",
+      "parse and load a real program, and refuse hostile ones", lesson_elf },
 };
 
 #define LESSON_COUNT ((int)(sizeof(lessons) / sizeof(lessons[0])))

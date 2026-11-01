@@ -27,7 +27,8 @@ Instead of hiding low-level details, KernelCraft OS exposes them clearly:
 - kernel heap
 - virtual memory (page-table walking), threads and a scheduler
 - system calls, PCI discovery
-- later: user mode, a filesystem, drivers
+- user mode: ring 3, the TSS, per-process address spaces, an ELF loader
+- later: a filesystem, disk drivers, fork
 
 ## Learn by running it
 
@@ -35,7 +36,7 @@ KernelCraft is a kernel that teaches itself. Boot it and type:
 
 | Command         | What you get                                                        |
 | --------------- | ------------------------------------------------------------------- |
-| `learn`         | the list of 14 lessons, from boot to PCI                            |
+| `learn`         | the list of 17 lessons, from boot to user-mode processes            |
 | `learn heap`    | one lesson: explanation plus **live** data from the running machine |
 | `tour`          | every lesson in order                                               |
 | `quiz`          | 10 random questions with explanations                               |
@@ -64,10 +65,12 @@ Implemented stages so far:
 - read-only page-table walker
 - kernel heap (`kmalloc` / `kfree`, first fit with split and coalesce)
 - kernel threads and a preemptive round-robin scheduler, sleep/join, mutexes
-- `int 0x80` system call layer (kernel-side half)
+- `int 0x80` system calls through a DPL 3 gate
+- **user mode**: real ring 3 processes, each with its own address space, loaded
+  from ELF executables; faults kill the process, not the kernel
 - PCI enumeration
 - freestanding library: `string.h` helpers and `kprintf`
-- 14 interactive lessons, a glossary and a quiz
+- 17 interactive lessons, a glossary and a quiz
 - self-tests (including every lesson, run headless) for `make test`
 
 ## Building and running
@@ -104,6 +107,7 @@ Type `help` for the full list (generated from the command table in
 | `alloc [n]`, `free <addr> [n]` | physical frames (refuses reserved ones)    |
 | `kmalloc <bytes>`, `kfree <addr>`, `heap [dump]` | the kernel heap          |
 | `vtop <addr>`          | walk the page tables for an address                |
+| `progs`, `run <prog>...`, `spawn <prog>`, `kill <pid>` | user-mode programs   |
 | `ps`                   | threads and scheduler statistics                   |
 | `pci`                  | list PCI devices                                   |
 | `hexdump <addr> [len]` | dump memory (first 1 GiB only)                     |
@@ -111,6 +115,23 @@ Type `help` for the full list (generated from the command table in
 | `int3`, `div0`, `pf`, `panic`, `regs` | traps, faults and the saved frame   |
 | `selftest`             | run the kernel self-tests                          |
 | `echo`, `clear`, `about`, `reboot`, `halt` | the basics                     |
+
+## User programs
+
+`user/prog_<name>.c` files are compiled into real ELF executables, linked at
+`0x40000000`, embedded in the kernel image, and run in ring 3:
+
+```text
+craft> run hello                  a program in ring 3, via int 0x80
+craft> run isolate isolate        same virtual address, different memory
+craft> run crash_kernel           reads kernel memory: killed by a page fault
+craft> run privileged             executes `cli`: killed by a protection fault
+craft> spawn spin  /  ps  /  kill 8     a runaway loop is preempted, then ended
+```
+
+To add one, create `user/prog_mine.c` with `int main(void)` (the runtime in
+`user/ulib.h` has `uputs`, `ugetpid`, `usleep_ms`, ...), run `make`, then
+`run mine`. No Makefile edit is needed.
 
 To add a command, write `static void cmd_foo(int argc, char **argv)` and add
 one line to the `commands[]` table.
@@ -128,13 +149,16 @@ kernelcraft/
 ├── docs/
 │   ├── curriculum.md          the lessons, source files to read, exercises
 │   └── memory.md              how the PMM and heap work
+├── user/                      user-mode programs, runtime and linker script
+├── tools/                     mkblob.sh: embeds the ELFs in the kernel
 ├── iso/
 ├── include/
 │   ├── arch/                  x86_64 hardware: GDT, IDT, PIC, PIT, RTC, PCI, ...
 │   ├── boot/                  Multiboot2 structures and boot info
 │   ├── learn/                 the lesson framework
 │   ├── lib/                   string helpers and kprintf
-│   ├── mm/                    pmm.h, heap.h, paging.h
+│   ├── mm/                    pmm.h, heap.h, paging.h, aspace.h
+│   ├── proc/                  ELF loader and user processes
 │   ├── sched/                 threads, scheduler, mutex
 │   └── syscall/               system call numbers and ABI
 └── src/
@@ -142,7 +166,8 @@ kernelcraft/
     ├── boot/
     ├── learn/                 one file per lesson, plus glossary and quiz
     ├── lib/
-    ├── mm/
+    ├── mm/                    pmm, heap, paging walker, per-process address spaces
+    ├── proc/                  elf.c, process.c, usermode.asm (iretq into ring 3)
     ├── sched/                 thread.c and switch.asm (the context switch)
     ├── syscall/
     ├── kmain.c                boot sequence and the main loop

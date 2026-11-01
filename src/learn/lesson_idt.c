@@ -73,7 +73,8 @@ void lesson_idt(void) {
     learn_para("attr 0x8E = present, ring 0, 64-bit interrupt gate. sel 0x08 is "
                "the kernel code segment from the GDT lesson - the two tables "
                "are linked by that number. IST 0 means 'stay on the current "
-               "stack'; a real kernel gives double faults their own IST stack.");
+               "stack'; a real kernel gives double faults their own IST stack. "
+               "Vector 128 is attr 0xEE, DPL 3: the one gate ring 3 may use.");
     LEARN_NEXT();
 
     learn_page("Exceptions and the IDT");

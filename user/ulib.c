@@ -24,11 +24,12 @@ void uputdec(unsigned long v) {
 void uputhex(unsigned long v) {
     static const char digits[] = "0123456789abcdef";
     char buf[17];
+    int i = 16;
 
-    for (int i = 15; i >= 0; i--) {
-        buf[i] = digits[v & 0xF];
+    buf[i] = '\0';
+    do {
+        buf[--i] = digits[v & 0xF];
         v >>= 4;
-    }
-    buf[16] = '\0';
-    uputs(buf);
+    } while (v);
+    uputs(&buf[i]);
 }

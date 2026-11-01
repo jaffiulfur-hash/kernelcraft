@@ -30,7 +30,8 @@ void lesson_roadmap(void) {
     kprintf(" 5     lessons, page-table walker       learn/ mm/paging.c\n");
     kprintf(" 5.2   threads and a scheduler          sched/\n");
     kprintf(" 5.3   PCI scan, system calls           pci.c syscall/\n");
-    kprintf(" next  user mode, filesystem, drivers   (your turn)\n\n");
+    kprintf(" 6     user mode, address spaces, ELF   proc/ mm/aspace.c user/\n");
+    kprintf(" next  filesystem, disk driver, fork    (your turn)\n\n");
     learn_para("The order is not arbitrary. You cannot handle a fault until the "
                "IDT exists, cannot allocate until you know what memory you have, "
                "and cannot schedule threads until you can allocate their stacks.");
@@ -38,11 +39,11 @@ void lesson_roadmap(void) {
 
     learn_page("How an operating system is built");
     learn_heading("Where KernelCraft stops, and how to study it");
-    learn_para("A production kernel adds: user mode with a separate address "
-               "space per process, demand-paged 4 KiB mappings, a virtual file "
-               "system with disk drivers, multiple CPUs and the APIC, ACPI power "
-               "management, a network stack, and a security model. Each one "
-               "builds on exactly the pieces you can inspect here.");
+    learn_para("A production kernel adds: fork and exec, demand-paged memory "
+               "and shared libraries, a virtual file system with disk drivers, "
+               "multiple CPUs and the APIC, ACPI power management, a network "
+               "stack, and a far larger security model. Each one builds on "
+               "exactly the pieces you can inspect here.");
     learn_para("A good way to use this repository:\n"
                "1. run a lesson and watch the live data\n"
                "2. open the source file it points to\n"

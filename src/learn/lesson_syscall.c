@@ -2,6 +2,7 @@
 #include "arch/cpu.h"
 #include "arch/interrupts.h"
 #include "lib/kprintf.h"
+#include "proc/process.h"
 #include "syscall/syscall.h"
 
 void lesson_syscall(void) {
@@ -21,10 +22,10 @@ void lesson_syscall(void) {
                "number and arguments from registers, validates them, "
                "dispatches through a table, and puts the result in rax. "
                "iretq returns to ring 3.");
-    learn_para("Honest caveat: KernelCraft has no user mode yet. The caller "
-               "here is kernel code already in ring 0, so the CPU does not "
-               "change privilege or stack. Everything else is genuine: the "
-               "same gate, register ABI, table and return path.");
+    learn_para("From a ring 3 program the CPU also switches to the kernel stack "
+               "named in the TSS; run 'run hello' to see it. Kernel code like "
+               "this lesson may use int 0x80 too, from ring 0, where nothing "
+               "switches - handy for testing the same table.");
     LEARN_NEXT();
 
     learn_page("System calls");
@@ -55,20 +56,28 @@ void lesson_syscall(void) {
 
     learn_page("System calls");
     learn_heading("The hard part is distrust");
-    learn_para("Look at the 'bad pointer' line. A kernel must treat every "
-               "argument from a program as hostile: a pointer might aim at "
-               "kernel memory, wrap around the address space, or reach "
-               "unmapped pages. syscall.c checks that the whole range lies "
-               "where it is allowed before touching it; real kernels do the "
-               "same with copy_from_user / copy_to_user, and many past "
-               "vulnerabilities were a missing check exactly here.");
-    learn_para("To turn this into real system calls you need four things, "
-               "all covered in earlier lessons: user code and data segments in "
-               "the GDT (DPL 3), a TSS so the CPU knows the kernel stack, page "
-               "tables with the US bit set for user memory only, and an IDT "
-               "gate with DPL 3 (attribute 0xEE) so int 0x80 is legal from "
-               "ring 3. Linux skips the IDT for speed and uses the syscall "
-               "instruction, configured through MSRs.");
-    learn_try("exercise: add SYS_GETTICKS to syscall.h/.c and call it from a "
-              "thread.");
+    learn_live("user/prog_badptr.c hands the kernel hostile pointers");
+    {
+        const char *why = 0;
+        struct thread *t = process_spawn("badptr", 0, &why);
+        struct process_result r;
+
+        if (t && process_wait(t, &r) == 0) {
+            kprintf("  -> exit code %d (0 means the kernel refused every bad pointer)\n\n",
+                    r.exit_code);
+        } else {
+            kprintf("  cannot run: %s\n\n", why ? why : "?");
+        }
+    }
+    learn_para("A kernel must treat every argument from a program as hostile: a "
+               "pointer might aim at kernel memory, wrap around the address "
+               "space, or reach unmapped pages. syscall.c checks that the "
+               "whole range lies in the caller's own mapped pages before "
+               "touching it; real kernels do the same in copy_from_user. "
+               "Many real vulnerabilities were a missing check right here.");
+    learn_para("Why can ring 3 use this gate? Its IDT attribute is 0xEE: DPL 3. "
+               "Every other gate is DPL 0, so a user-mode 'int 14' just "
+               "raises a protection fault.");
+    learn_try("exercise: add SYS_GETTICKS to numbers.h and syscall.c, then call "
+              "it from a new user/prog_ticks.c.");
 }

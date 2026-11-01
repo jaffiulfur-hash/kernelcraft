@@ -97,8 +97,9 @@ void lesson_paging(void) {
     kprintf("  memory-mapped files the page cache and mmap() are page tables too\n");
     kprintf("  swapping            a not-present entry can point at disk\n\n");
     learn_para("Everything above is the same four-level walk you just watched, "
-               "plus policy. The mechanism is small; the policy is what fills "
-               "the textbooks.");
+               "plus policy. KernelCraft now does the first three for user "
+               "processes - see 'learn aspace'. The mechanism is small; the "
+               "policy is what fills the textbooks.");
     learn_try("exercise: write paging_map(virt, phys, flags) that builds a 4 KiB "
               "mapping, then map the VGA buffer at another address.");
 }

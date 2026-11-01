@@ -16,8 +16,9 @@ splits and merges, the threads being scheduled.
    `quiz`. `tour` runs every lesson in order.
 
 `make test` boots the kernel headless and runs every lesson plus the
-self-tests, so the curriculum cannot silently rot: if a lesson crashes, the
-build fails.
+self-tests - including real user processes that crash, get killed, and must
+not leak a single frame - so the curriculum cannot silently rot: if a lesson
+crashes, the build fails.
 
 ## The lessons
 
@@ -37,21 +38,25 @@ build fails.
 | 12 | `sync` | race conditions, mutexes, atomics, deadlock | `sched/sync.h` | Construct a deadlock with two mutexes, then fix it. |
 | 13 | `syscall` | the kernel entry point, ABI, distrusting arguments | `syscall/syscall.c` | Add a `SYS_GETTICKS` call. |
 | 14 | `pci` | hardware discovery, config space, BARs | `arch/x86_64/pci.c` | Read a register from the network card's BAR. |
+| 15 | `usermode` | rings, the TSS, `iretq` into ring 3, DPL 3 gates, how faults are contained | `arch/x86_64/gdt.c`, `proc/usermode.asm`, `proc/process.c` | Give a user program a second syscall (`SYS_GETTICKS`). |
+| 16 | `aspace` | per-process page tables, the US bit rule, NX, shared kernel half | `mm/aspace.c`, `sched/thread.c` (CR3 switch) | Map a shared page into two processes on purpose. |
+| 17 | `elf` | the executable format, how a loader builds a process, validating hostile files | `proc/elf.c`, `user/user.ld`, `tools/mkblob.sh` | Write `user/prog_mine.c` and run it. |
 
-A good order for a first pass is simply 1 to 14: each lesson only relies on
+A good order for a first pass is simply 1 to 17: each lesson only relies on
 the ones before it.
 
 ## What is real, and what is not
 
 Everything the live sections print is read from hardware or kernel state at
-that moment - nothing is canned. Two honest limits:
+that moment - nothing is canned. Honest limits:
 
-- **No user mode yet.** `int 0x80` works, but the caller is kernel code in
-  ring 0, so the CPU does not change privilege. The `syscall` lesson says so
-  and explains the missing pieces (GDT user segments, TSS, US page bits, a
-  DPL 3 gate).
-- **One CPU, no filesystem or disk driver.** Locking is "disable interrupts",
-  and there is nothing persistent. These are natural next stages.
+- **Processes are minimal.** Each gets a private 2 MiB window of 4 KiB pages
+  (code, data, a 16 KiB stack) and six system calls. There is no `fork`/`exec`,
+  no arguments or environment, no signals, and programs are embedded in the
+  kernel image because there is no filesystem yet.
+- **One CPU.** Locking is "disable interrupts"; there is no SMP.
+- **No persistent storage.** No disk driver or filesystem - the natural next
+  stages, and the reason programs live inside the kernel image.
 
 ## Adding a lesson
 
