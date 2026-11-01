@@ -12,6 +12,10 @@
 #define MULTIBOOT_TAG_TYPE_MMAP             6
 
 #define MULTIBOOT_MEMORY_AVAILABLE          1
+#define MULTIBOOT_MEMORY_RESERVED           2
+#define MULTIBOOT_MEMORY_ACPI_RECLAIMABLE   3
+#define MULTIBOOT_MEMORY_NVS                4
+#define MULTIBOOT_MEMORY_BADRAM             5
 
 struct multiboot_tag {
     uint32_t type;
@@ -39,6 +43,18 @@ struct multiboot_tag_mmap {
     struct multiboot_mmap_entry entries[0];
 } __attribute__((packed));
 
+/* Total size in bytes of the boot information block (including its header). */
+uint32_t mb2_info_size(uint32_t mb_info_addr);
+
+/* First tag of the given type, or NULL if the bootloader did not provide one. */
+const struct multiboot_tag *mb2_find_tag(uint32_t mb_info_addr, uint32_t type);
+
 const struct multiboot_tag_mmap *mb2_find_mmap_tag(uint32_t mb_info_addr);
+
+/* Bootloader name tag text (e.g. "GRUB 2.12"), or NULL if absent. */
+const char *mb2_bootloader_name(uint32_t mb_info_addr);
+
+/* Human-readable name for a MULTIBOOT_MEMORY_* region type. */
+const char *mb2_mmap_type_name(uint32_t type);
 
 #endif

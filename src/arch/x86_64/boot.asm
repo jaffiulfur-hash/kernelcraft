@@ -12,26 +12,26 @@ mb2_header:
 mb2_end:
 
 section .bss
-align 16
+alignb 16
 stack_bottom:
     resb 16384
 stack_top:
 
-align 4
+alignb 4
 mb2_magic_saved:
     resd 1
 mb2_info_saved:
     resd 1
 
-align 4096
+alignb 4096
 pml4_table:
     resq 512
 
-align 4096
+alignb 4096
 pdpt_table:
     resq 512
 
-align 4096
+alignb 4096
 pd_table:
     resq 512
 
